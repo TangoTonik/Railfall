@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — built day by day, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 1 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
