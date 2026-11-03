@@ -32,6 +32,10 @@ jobs:
       - name: Validate compose file
         run: docker compose config --quiet
 
+      - name: Build MinIO image from source
+        # No public MinIO images exist any more; see infra/minio/Dockerfile.
+        run: docker compose build minio
+
       - name: Boot stack
         run: docker compose up -d --wait postgres minio
 
@@ -45,6 +49,16 @@ jobs:
           LAKE_BUCKET: railfall-lake
           WAREHOUSE_DSN: postgresql://rail:rail@localhost:5432/warehouse
         run: python -m railfall.healthcheck --wait 60
+
+      - name: Write round-trip (lake + warehouse)
+        env:
+          LAKE_ENDPOINT_URL: http://localhost:9000
+          LAKE_BUCKET: railfall-lake
+          WAREHOUSE_DSN: postgresql://rail:rail@localhost:5432/warehouse
+        run: python -m railfall.healthcheck --write
+
+      - name: Bucket init is idempotent
+        run: docker compose run --rm minio-init
 
       - name: Dump service logs
         if: failure()
