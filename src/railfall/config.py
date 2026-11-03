@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -13,7 +13,11 @@ class Settings:
 
     lake_endpoint_url: str = "http://localhost:9000"
     lake_bucket: str = "railfall-lake"
-    warehouse_dsn: str = "postgresql://rail:rail@localhost:5432/warehouse"
+    lake_access_key: str = "railfall"
+    lake_secret_key: str = field(default="railfall-secret", repr=False)
+    warehouse_dsn: str = field(
+        default="postgresql://rail:rail@localhost:5432/warehouse", repr=False
+    )
     http_timeout_s: float = 30.0
     http_max_retries: int = 3
 
@@ -37,6 +41,12 @@ class Settings:
         return cls(
             lake_endpoint_url=env.get("LAKE_ENDPOINT_URL", defaults.lake_endpoint_url),
             lake_bucket=env.get("LAKE_BUCKET", defaults.lake_bucket),
+            lake_access_key=env.get(
+                "LAKE_ACCESS_KEY", env.get("MINIO_ROOT_USER", defaults.lake_access_key)
+            ),
+            lake_secret_key=env.get(
+                "LAKE_SECRET_KEY", env.get("MINIO_ROOT_PASSWORD", defaults.lake_secret_key)
+            ),
             warehouse_dsn=env.get("WAREHOUSE_DSN", defaults.warehouse_dsn),
             http_timeout_s=_float("HTTP_TIMEOUT_S", defaults.http_timeout_s),
             http_max_retries=_int("HTTP_MAX_RETRIES", defaults.http_max_retries),
