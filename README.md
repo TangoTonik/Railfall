@@ -34,6 +34,24 @@ pre-commit install
 pytest
 ```
 
+### Local platform (Postgres + MinIO)
+
+Needs Docker with Compose v2. The first `make up` builds MinIO from pinned
+source (no public images exist any more), which takes a few minutes.
+
+```bash
+make up       # build, start Postgres + MinIO, wait until healthy, create the lake bucket
+make health   # check every service answers
+make smoke    # also write to the lake and warehouse and read back
+make down     # stop (keeps data); `make clean` also deletes the volumes
+```
+
+| Service | URL | Default credentials (`.env`) |
+|---|---|---|
+| Postgres warehouse | `localhost:5432/warehouse` | `rail` / `rail` |
+| MinIO S3 API | http://localhost:9000 | `railfall` / `railfall-secret` |
+| MinIO console | http://localhost:9001 | same as above |
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
