@@ -1,0 +1,55 @@
+name: e2e
+
+# Boots the real Docker Compose stack and runs the pipeline as far as it exists.
+# No mocks here: every step talks to real services (see CLAUDE.md).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install railfall
+        run: pip install -e .
+
+      - name: Prepare environment
+        run: cp .env.example .env
+
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+      - name: Boot stack
+        run: docker compose up -d --wait postgres minio
+
+      - name: Create lake bucket
+        # One-shot job; `run` returns its exit code, so a failed bucket init fails the job.
+        run: docker compose run --rm minio-init
+
+      - name: Health-check platform
+        env:
+          LAKE_ENDPOINT_URL: http://localhost:9000
+          LAKE_BUCKET: railfall-lake
+          WAREHOUSE_DSN: postgresql://rail:rail@localhost:5432/warehouse
+        run: python -m railfall.healthcheck --wait 60
+
+      - name: Dump service logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
