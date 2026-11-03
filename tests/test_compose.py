@@ -59,3 +59,10 @@ def test_every_compose_variable_is_documented():
     used = set(re.findall(r"\$\{([A-Z_]+)(?::-[^}]*)?\}", COMPOSE.read_text()))
     missing = used - _env_example_keys()
     assert not missing, f"undocumented compose variables: {sorted(missing)}"
+
+
+def test_minio_images_come_from_quay(compose):
+    """MinIO no longer publishes to Docker Hub; `minio/minio` pulls are denied."""
+    for name in ("minio", "minio-init"):
+        image = compose["services"][name]["image"]
+        assert image.startswith("quay.io/minio/"), f"{name} pulls from Docker Hub: {image}"
