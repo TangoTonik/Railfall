@@ -43,6 +43,14 @@ jobs:
       - name: Bucket init is idempotent
         run: docker compose run --rm minio-init
 
+      - name: Data survives a restart
+        # `down` keeps the named volumes. Restart *without* minio-init: the
+        # lake-bucket check only passes if the bucket persisted on disk.
+        run: |
+          docker compose down
+          docker compose up -d --wait postgres minio
+          make health WAIT=60
+
       - name: Dump service logs
         if: failure()
         run: docker compose logs --no-color
