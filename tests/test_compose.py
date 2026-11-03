@@ -61,8 +61,24 @@ def test_every_compose_variable_is_documented():
     assert not missing, f"undocumented compose variables: {sorted(missing)}"
 
 
-def test_minio_images_come_from_quay(compose):
-    """MinIO no longer publishes to Docker Hub; `minio/minio` pulls are denied."""
+def test_minio_is_built_from_pinned_source(compose):
+    """MinIO images are no longer pullable (Docker Hub denied, quay.io unauthorized)."""
     for name in ("minio", "minio-init"):
-        image = compose["services"][name]["image"]
-        assert image.startswith("quay.io/minio/"), f"{name} pulls from Docker Hub: {image}"
+        svc = compose["services"][name]
+        assert svc["build"]["context"] == "./infra/minio", name
+        for arg, release in svc["build"]["args"].items():
+            assert release.startswith("RELEASE.20"), f"{name}: {arg} not pinned: {release}"
+
+
+def test_dockerfile_build_args_match_compose(compose):
+    dockerfile = (ROOT / "infra/minio/Dockerfile").read_text()
+    for arg, release in compose["services"]["minio"]["build"]["args"].items():
+        assert f"ARG {arg}={release}" in dockerfile, f"Dockerfile default for {arg} drifted"
+
+
+def test_dockerfile_base_images_are_pinned():
+    dockerfile = (ROOT / "infra/minio/Dockerfile").read_text()
+    bases = re.findall(r"^FROM\s+(\S+)", dockerfile, flags=re.M)
+    assert bases
+    for base in bases:
+        assert ":" in base and not base.endswith(":latest"), base

@@ -2,6 +2,16 @@
 # Credentials come from `.env` (copy `.env.example`); defaults are for local dev only.
 name: railfall
 
+# MinIO no longer publishes container images, so both MinIO services share one
+# image built from pinned upstream source (see infra/minio/Dockerfile).
+x-minio-image: &minio-image
+  build:
+    context: ./infra/minio
+    args:
+      MINIO_RELEASE: RELEASE.2024-10-13T13-34-11Z
+      MC_RELEASE: RELEASE.2024-10-08T09-37-26Z
+  image: railfall-minio:RELEASE.2024-10-13T13-34-11Z
+
 services:
   postgres:
     image: postgres:16.4-alpine
@@ -21,8 +31,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-10-13T13-34-11Z
-    command: ["server", "/data", "--console-address", ":9001"]
+    <<: *minio-image
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-railfall}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-railfall-secret}
@@ -32,7 +41,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -42,7 +51,7 @@ services:
   # (`--ignore-existing`), so `docker compose up` can be re-run safely.
   # Day 3 moves bucket management to Terraform; this keeps `up` usable alone.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2024-10-08T09-37-26Z
+    <<: *minio-image
     depends_on:
       minio:
         condition: service_healthy
