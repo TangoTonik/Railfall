@@ -1,0 +1,65 @@
+# Local Railfall platform: Postgres warehouse + MinIO data lake.
+# Credentials come from `.env` (copy `.env.example`); defaults are for local dev only.
+name: railfall
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rail}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rail}
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-railfall}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-railfall-secret}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot job: create the lake bucket once MinIO is healthy. Idempotent
+  # (`--ignore-existing`), so `docker compose up` can be re-run safely.
+  # Day 3 moves bucket management to Terraform; this keeps `up` usable alone.
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-railfall}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-railfall-secret}
+      LAKE_BUCKET: ${LAKE_BUCKET:-railfall-lake}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set lake http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "lake/$$LAKE_BUCKET"
+        echo "bucket $$LAKE_BUCKET ready"
+    restart: "no"
+
+volumes:
+  pg_data:
+  minio_data:
