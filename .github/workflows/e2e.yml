@@ -26,36 +26,19 @@ jobs:
       - name: Install railfall
         run: pip install -e .
 
-      - name: Prepare environment
-        run: cp .env.example .env
-
       - name: Validate compose file
-        run: docker compose config --quiet
+        run: cp .env.example .env && docker compose config --quiet
 
-      - name: Build MinIO image from source
+      - name: Boot stack (build MinIO, wait healthy, create bucket)
+        # Same entry point as local dev; `.env` is exported to the health checks too.
         # No public MinIO images exist any more; see infra/minio/Dockerfile.
-        run: docker compose build minio
-
-      - name: Boot stack
-        run: docker compose up -d --wait postgres minio
-
-      - name: Create lake bucket
-        # One-shot job; `run` returns its exit code, so a failed bucket init fails the job.
-        run: docker compose run --rm minio-init
+        run: make up
 
       - name: Health-check platform
-        env:
-          LAKE_ENDPOINT_URL: http://localhost:9000
-          LAKE_BUCKET: railfall-lake
-          WAREHOUSE_DSN: postgresql://rail:rail@localhost:5432/warehouse
-        run: python -m railfall.healthcheck --wait 60
+        run: make health WAIT=60
 
       - name: Write round-trip (lake + warehouse)
-        env:
-          LAKE_ENDPOINT_URL: http://localhost:9000
-          LAKE_BUCKET: railfall-lake
-          WAREHOUSE_DSN: postgresql://rail:rail@localhost:5432/warehouse
-        run: python -m railfall.healthcheck --write
+        run: make smoke WAIT=0
 
       - name: Bucket init is idempotent
         run: docker compose run --rm minio-init
