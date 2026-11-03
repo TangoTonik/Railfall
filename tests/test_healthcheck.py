@@ -123,3 +123,51 @@ def test_main_exit_code(monkeypatch, capsys, ok, code):
     )
     assert healthcheck.main([]) == code
     assert "pg" in capsys.readouterr().out
+
+
+@pytest.fixture
+def fake_lake(monkeypatch):
+    """In-memory S3 (moto) with the lake bucket created."""
+    moto = pytest.importorskip("moto")
+    for var in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    with moto.mock_aws():
+        # No endpoint override: moto only intercepts the default AWS endpoints.
+        settings = Settings(lake_endpoint_url=None)  # type: ignore[arg-type]
+        client = healthcheck._s3_client(settings)
+        client.create_bucket(Bucket=settings.lake_bucket)
+        yield settings, client
+
+
+def test_lake_roundtrip_leaves_nothing_behind(fake_lake):
+    settings, client = fake_lake
+    result = healthcheck.check_lake_roundtrip(settings)
+    assert result.ok, result.detail
+    listed = client.list_objects_v2(Bucket=settings.lake_bucket, Prefix=healthcheck.SMOKE_PREFIX)
+    assert listed["KeyCount"] == 0
+
+
+def test_lake_roundtrip_missing_bucket(fake_lake):
+    settings, _ = fake_lake
+    missing = Settings(lake_endpoint_url=None, lake_bucket="no-such-bucket")  # type: ignore[arg-type]
+    result = healthcheck.check_lake_roundtrip(missing)
+    assert result.name == "lake-write" and not result.ok
+
+
+def test_warehouse_write_unreachable_is_reported_not_raised():
+    dsn = f"postgresql://rail:rail@127.0.0.1:{_free_port()}/warehouse"
+    result = healthcheck.check_warehouse_write(Settings(warehouse_dsn=dsn))
+    assert result.name == "warehouse-write" and not result.ok
+
+
+@pytest.mark.parametrize(("flag", "expected"), [([], 3), (["--write"], 5)])
+def test_main_write_flag_adds_write_checks(monkeypatch, flag, expected):
+    seen = {}
+
+    def fake_run(settings, checks, **kwargs):
+        seen["checks"] = checks
+        return [CheckResult("x", True, "")]
+
+    monkeypatch.setattr(healthcheck, "run_checks", fake_run)
+    assert healthcheck.main(flag) == 0
+    assert len(seen["checks"]) == expected

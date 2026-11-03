@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = ["psycopg[binary]>=3.2", "boto3>=1.34"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "pre-commit>=3", "pyyaml>=6"]
+dev = ["pytest>=8", "ruff>=0.6", "pre-commit>=3", "pyyaml>=6", "moto[s3]>=5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
