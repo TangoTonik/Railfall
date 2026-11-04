@@ -134,3 +134,61 @@ def test_every_referenced_variable_is_declared(variables):
         used |= set(re.findall(r"\bvar\.([a-z_][a-z0-9_]*)", path.read_text()))
     assert used, "no variable references found"
     assert used <= set(variables), f"undeclared: {sorted(used - set(variables))}"
+
+
+@pytest.fixture(scope="module")
+def postgres_doc() -> dict:
+    return _load("postgres.tf")
+
+
+def _locals(doc: dict) -> dict:
+    out: dict = {}
+    for item in doc.get("locals", []):
+        out.update(item)
+    return out
+
+
+def test_warehouse_has_one_schema_per_elt_stage(postgres_doc):
+    assert _locals(postgres_doc)["warehouse_schemas"] == ["raw", "staging", "marts"]
+
+
+def test_every_schema_has_exactly_one_writer(postgres_doc):
+    local = _locals(postgres_doc)
+    writers = local["schema_writers"]
+    assert set(writers) == set(local["warehouse_schemas"])
+    assert set(writers.values()) <= set(local["warehouse_roles"])
+
+
+def test_reader_role_only_reads_marts(postgres_doc):
+    local = _locals(postgres_doc)
+    assert "reader" not in local["schema_writers"].values()
+    readable = {s for s, roles in local["schema_readers"].items() if "reader" in roles}
+    assert readable == {"marts"}
+
+
+def test_pipeline_roles_have_no_admin_rights(postgres_doc):
+    role = _resources(postgres_doc)["postgresql_role.pipeline"]
+    assert role["login"] is True
+    for flag in ("superuser", "create_database", "create_role"):
+        assert role[flag] is False, flag
+
+
+def test_role_passwords_come_from_sensitive_variables(postgres_doc, variables):
+    roles = _locals(postgres_doc)["warehouse_roles"]
+    for actor, spec in roles.items():
+        match = re.fullmatch(r"\$\{var\.([a-z_]+)\}", spec["password"])
+        assert match, f"{actor}: password must be a variable reference"
+        assert variables[match.group(1)]["sensitive"] is True
+
+
+def test_schemas_are_not_dropped_with_cascade(postgres_doc):
+    schema = _resources(postgres_doc)["postgresql_schema.warehouse"]
+    assert schema["drop_cascade"] is False
+
+
+def test_postgres_db_default_matches_compose(variables):
+    import yaml
+
+    compose = yaml.safe_load((TF_DIR.parents[1] / "docker-compose.yml").read_text())
+    env = compose["services"]["postgres"]["environment"]
+    assert env["POSTGRES_DB"] == f"${{POSTGRES_DB:-{variables['postgres_db']['default']}}}"
