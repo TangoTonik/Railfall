@@ -12,3 +12,13 @@ output "lake_pipeline_user" {
   description = "Access key the pipelines use for the lake."
   value       = minio_iam_user.pipeline.name
 }
+
+output "warehouse_schemas" {
+  description = "Schemas created in the warehouse database."
+  value       = sort([for s in postgresql_schema.warehouse : s.name])
+}
+
+output "warehouse_roles" {
+  description = "Pipeline role names keyed by actor (loader, transformer, reader)."
+  value       = { for k, r in postgresql_role.pipeline : k => r.name }
+}

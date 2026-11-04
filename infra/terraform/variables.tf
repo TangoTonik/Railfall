@@ -45,3 +45,50 @@ variable "lake_pipeline_secret" {
     error_message = "lake_pipeline_secret must be at least 8 characters."
   }
 }
+
+variable "postgres_host" {
+  description = "Warehouse Postgres host."
+  type        = string
+  default     = "localhost"
+}
+
+variable "postgres_port" {
+  description = "Warehouse Postgres port."
+  type        = number
+  default     = 5432
+}
+
+variable "postgres_db" {
+  description = "Warehouse database the schemas are created in."
+  type        = string
+  default     = "warehouse"
+}
+
+variable "postgres_admin_user" {
+  description = "Bootstrap Postgres user (POSTGRES_USER), used only by Terraform."
+  type        = string
+}
+
+variable "postgres_admin_password" {
+  description = "Bootstrap Postgres password (POSTGRES_PASSWORD), used only by Terraform."
+  type        = string
+  sensitive   = true
+}
+
+variable "warehouse_loader_password" {
+  description = "Password of the loader role that writes the raw schema."
+  type        = string
+  sensitive   = true
+}
+
+variable "warehouse_transformer_password" {
+  description = "Password of the dbt role that builds staging and marts."
+  type        = string
+  sensitive   = true
+}
+
+variable "warehouse_reader_password" {
+  description = "Password of the read-only role used by BI tools (Metabase)."
+  type        = string
+  sensitive   = true
+}
