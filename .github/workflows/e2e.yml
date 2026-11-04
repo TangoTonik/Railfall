@@ -50,8 +50,13 @@ jobs:
       - name: Health-check platform
         run: make health WAIT=60
 
-      - name: Write round-trip (lake + warehouse)
-        run: make smoke WAIT=0
+      - name: Write round-trip (lake + warehouse) as the pipeline identities
+        # `.env` points the app at the Terraform-managed users, not the admins:
+        # the round-trip only passes if those grants are enough to do the job.
+        run: |
+          out=$(make --no-print-directory smoke WAIT=0)
+          echo "$out"
+          echo "$out" | grep -E '^\[ +ok\] +postgres .* as railfall_loader$'
 
       - name: Terraform state matches the real stack
         # A second plan right after apply must be empty (exit 0, not 2): the

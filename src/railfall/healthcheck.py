@@ -29,16 +29,18 @@ class CheckResult:
 
 
 def check_postgres(settings: Settings) -> CheckResult:
-    """Open a connection and run a trivial query against the warehouse."""
+    """Open a connection and report the server version and the role we connected as."""
     import psycopg
 
     try:
         with psycopg.connect(settings.warehouse_dsn, connect_timeout=5) as conn:
-            row = conn.execute("select version()").fetchone()
+            row = conn.execute("select version(), current_user").fetchone()
     except psycopg.Error as exc:
         return CheckResult("postgres", False, _first_line(exc))
-    version = row[0].split(" on ", 1)[0] if row else "unknown"
-    return CheckResult("postgres", True, version)
+    if not row:
+        return CheckResult("postgres", True, "unknown")
+    version = row[0].split(" on ", 1)[0]
+    return CheckResult("postgres", True, f"{version} as {row[1]}")
 
 
 def check_minio_live(settings: Settings) -> CheckResult:

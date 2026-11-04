@@ -82,3 +82,28 @@ def test_dockerfile_base_images_are_pinned():
     assert bases
     for base in bases:
         assert ":" in base and not base.endswith(":latest"), base
+
+
+def _env_example() -> dict[str, str]:
+    values = {}
+    for line in ENV_EXAMPLE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+
+def test_app_uses_terraform_identities_not_admin():
+    """The pipelines must connect as the least-privilege identities Terraform creates."""
+    from urllib.parse import urlsplit
+
+    env = _env_example()
+    assert env["LAKE_ACCESS_KEY"] != env["MINIO_ROOT_USER"]
+    assert env["LAKE_SECRET_KEY"] == env["TF_VAR_lake_pipeline_secret"]
+
+    dsn = urlsplit(env["WAREHOUSE_DSN"])
+    assert dsn.username == "railfall_loader"
+    assert dsn.username != env["POSTGRES_USER"]
+    assert dsn.password == env["TF_VAR_warehouse_loader_password"]
+    assert dsn.path.lstrip("/") == env["POSTGRES_DB"]
