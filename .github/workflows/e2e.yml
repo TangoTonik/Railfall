@@ -26,11 +26,24 @@ jobs:
       - name: Install railfall
         run: pip install -e .
 
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          # The wrapper rewrites stdout/exit codes; plan -detailed-exitcode needs the raw binary.
+          terraform_wrapper: false
+
+      - name: Terraform fmt + validate
+        run: |
+          terraform -chdir=infra/terraform fmt -check -recursive
+          terraform -chdir=infra/terraform init -input=false -backend=false
+          terraform -chdir=infra/terraform validate
+
       - name: Validate compose file
         run: cp .env.example .env && docker compose config --quiet
 
-      - name: Boot stack (build MinIO, wait healthy, create bucket)
-        # Same entry point as local dev; `.env` is exported to the health checks too.
+      - name: Boot stack (build MinIO, wait healthy, terraform apply)
+        # Same entry point as local dev; `.env` is exported to Terraform and the
+        # health checks too.
         # No public MinIO images exist any more; see infra/minio/Dockerfile.
         run: make up
 
@@ -40,16 +53,34 @@ jobs:
       - name: Write round-trip (lake + warehouse)
         run: make smoke WAIT=0
 
-      - name: Bucket init is idempotent
-        run: docker compose run --rm minio-init
+      - name: Terraform state matches the real stack
+        # A second plan right after apply must be empty (exit 0, not 2): the
+        # config is idempotent and providers read back what they created.
+        run: make infra-check
+
+      - name: Terraform outputs
+        run: |
+          out=$(terraform -chdir=infra/terraform output -json)
+          echo "$out"
+          echo "$out" | jq -e '.lake_bucket.value == "railfall-lake"'
+          echo "$out" | jq -e '.lake_layers.value == ["bronze/", "silver/"]'
+          echo "$out" | jq -e '.warehouse_schemas.value == ["marts", "raw", "staging"]'
+          echo "$out" | jq -e '.warehouse_roles.value | keys == ["loader", "reader", "transformer"]'
+
+      - name: Re-apply is a no-op
+        run: |
+          make infra
+          make infra-check
 
       - name: Data survives a restart
-        # `down` keeps the named volumes. Restart *without* minio-init: the
-        # lake-bucket check only passes if the bucket persisted on disk.
+        # `down` keeps the named volumes. Restart *without* Terraform: the
+        # lake-bucket check only passes if the bucket persisted on disk, and
+        # the drift check proves roles and schemas survived too.
         run: |
           docker compose down
           docker compose up -d --wait postgres minio
           make health WAIT=60
+          make infra-check
 
       - name: Dump service logs
         if: failure()
