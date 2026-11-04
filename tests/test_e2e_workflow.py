@@ -48,3 +48,10 @@ def test_no_mocks_in_e2e(steps):
     commands = " ".join(s.get("run", "") for s in steps).lower()
     for word in ("moto", "mock", "tests/fixtures"):
         assert word not in commands
+
+
+def test_privileges_are_audited_after_apply_and_after_restart(steps):
+    audits = [i for i, s in enumerate(steps) if "make access" in s.get("run", "")]
+    assert audits, "e2e must run the least-privilege audit"
+    assert min(audits) > _index(steps, "make up")
+    assert max(audits) >= _index(steps, "docker compose down\n")

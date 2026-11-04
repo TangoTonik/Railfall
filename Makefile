@@ -19,7 +19,7 @@ TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up infra-init infra infra-check health smoke logs ps down clean lint test
+.PHONY: help env build up infra-init infra infra-check access health smoke logs ps down clean lint test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -43,6 +43,9 @@ infra: infra-init ## Apply Terraform: lake bucket, pipeline user, warehouse sche
 
 infra-check: ## Fail if the running stack drifted from the Terraform config
 	$(TF) -chdir=$(TF_DIR) plan -input=false -detailed-exitcode -lock=false
+
+access: ## Prove each pipeline identity can do its job and nothing more
+	$(PYTHON) -m railfall.access
 
 health: ## Check every service answers (retries for WAIT seconds)
 	$(PYTHON) -m railfall.healthcheck --wait $(WAIT)

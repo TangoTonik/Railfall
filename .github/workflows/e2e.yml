@@ -67,6 +67,11 @@ jobs:
           echo "$out" | jq -e '.warehouse_schemas.value == ["marts", "raw", "staging"]'
           echo "$out" | jq -e '.warehouse_roles.value | keys == ["loader", "reader", "transformer"]'
 
+      - name: Least-privilege audit (pipeline identities)
+        # Connects as the lake pipeline user and each warehouse role created by
+        # Terraform: allowed actions must succeed, forbidden ones must be refused.
+        run: make access
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -81,6 +86,7 @@ jobs:
           docker compose up -d --wait postgres minio
           make health WAIT=60
           make infra-check
+          make access
 
       - name: Dump service logs
         if: failure()

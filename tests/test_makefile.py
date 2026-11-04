@@ -25,7 +25,7 @@ def _make(*args: str) -> str:
 
 def test_help_lists_documented_targets():
     out = _make("help")
-    for target in ("up", "infra", "infra-check", "health", "smoke", "down", "clean"):
+    for target in ("up", "infra", "infra-check", "access", "health", "smoke", "down", "clean"):
         assert f"  {target} " in out, f"`make help` misses {target}"
 
 
@@ -64,3 +64,7 @@ def test_down_keeps_volumes_but_clean_removes_them():
 def test_health_wait_is_overridable():
     out = _make("-n", "health", "WAIT=5")
     assert "-m railfall.healthcheck --wait 5" in out
+
+
+def test_access_runs_the_privilege_audit():
+    assert "-m railfall.access" in _make("-n", "access")
