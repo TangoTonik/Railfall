@@ -28,7 +28,12 @@ def _env_example_keys() -> set[str]:
 
 
 def test_core_services_present(compose):
-    assert {"postgres", "minio", "minio-init"} <= set(compose["services"])
+    assert {"postgres", "minio"} <= set(compose["services"])
+
+
+def test_provisioning_is_left_to_terraform(compose):
+    """Day 3: the bucket comes from Terraform; a compose init job would race it."""
+    assert "minio-init" not in compose["services"]
 
 
 @pytest.mark.parametrize("service", ["postgres", "minio"])
@@ -45,11 +50,6 @@ def test_images_are_pinned(compose):
         assert tag and tag != "latest", f"{name} uses an unpinned image: {image}"
 
 
-def test_bucket_init_waits_for_healthy_minio(compose):
-    deps = compose["services"]["minio-init"]["depends_on"]
-    assert deps["minio"]["condition"] == "service_healthy"
-
-
 def test_data_persists_in_named_volumes(compose):
     assert {"pg_data", "minio_data"} <= set(compose["volumes"])
 
@@ -63,7 +63,7 @@ def test_every_compose_variable_is_documented():
 
 def test_minio_is_built_from_pinned_source(compose):
     """MinIO images are no longer pullable (Docker Hub denied, quay.io unauthorized)."""
-    for name in ("minio", "minio-init"):
+    for name in ("minio",):
         svc = compose["services"][name]
         assert svc["build"]["context"] == "./infra/minio", name
         for arg, release in svc["build"]["args"].items():

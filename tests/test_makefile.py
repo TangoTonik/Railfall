@@ -25,17 +25,35 @@ def _make(*args: str) -> str:
 
 def test_help_lists_documented_targets():
     out = _make("help")
-    for target in ("up", "health", "smoke", "down", "clean"):
+    for target in ("up", "infra", "infra-check", "health", "smoke", "down", "clean"):
         assert f"  {target} " in out, f"`make help` misses {target}"
 
 
-def test_up_builds_then_waits_then_creates_bucket():
-    lines = [line for line in _make("-n", "up").splitlines() if "docker compose" in line]
+def test_up_builds_then_waits_then_provisions_with_terraform():
+    lines = [
+        line
+        for line in _make("-n", "up").splitlines()
+        if line.startswith(("docker compose", "terraform"))
+    ]
     assert lines == [
         "docker compose build minio",
         "docker compose up -d --wait postgres minio",
-        "docker compose run --rm minio-init",
+        "terraform -chdir=infra/terraform init -input=false",
+        "terraform -chdir=infra/terraform apply -input=false -auto-approve",
     ]
+
+
+def test_infra_check_fails_on_drift():
+    """`-detailed-exitcode` makes plan exit 2 when changes are pending."""
+    out = _make("-n", "infra-check")
+    assert "plan -input=false -detailed-exitcode" in out
+    assert "apply" not in out
+
+
+def test_terraform_targets_the_compose_ports():
+    probe = "--eval=probe: ; @echo $$TF_VAR_minio_server $$TF_VAR_postgres_port"
+    out = _make(probe, "probe", "MINIO_API_PORT=9100", "POSTGRES_PORT=5433")
+    assert out.split() == ["localhost:9100", "5433"]
 
 
 def test_down_keeps_volumes_but_clean_removes_them():

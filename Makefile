@@ -9,13 +9,21 @@ export
 COMPOSE ?= docker compose
 PYTHON ?= python
 WAIT ?= 60
+TF ?= terraform
+TF_DIR := infra/terraform
+
+# Terraform reaches MinIO on the host port published by compose.
+TF_VAR_minio_server ?= localhost:$(or $(MINIO_API_PORT),9000)
+TF_VAR_postgres_port ?= $(or $(POSTGRES_PORT),5432)
+TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
+TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up health smoke logs ps down clean lint test
+.PHONY: help env build up infra-init infra infra-check health smoke logs ps down clean lint test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "} {printf "  %-8s %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "} {printf "  %-12s %s\n", $$1, $$2}'
 
 env: ## Create .env from .env.example if it does not exist
 	@test -f .env || (cp .env.example .env && echo "created .env from .env.example")
@@ -23,9 +31,18 @@ env: ## Create .env from .env.example if it does not exist
 build: env ## Build the source-built MinIO image
 	$(COMPOSE) build minio
 
-up: build ## Start Postgres + MinIO, wait until healthy, create the lake bucket
+up: build ## Start Postgres + MinIO, wait until healthy, provision them with Terraform
 	$(COMPOSE) up -d --wait postgres minio
-	$(COMPOSE) run --rm minio-init
+	$(MAKE) --no-print-directory infra
+
+infra-init: ## Download the pinned Terraform providers
+	$(TF) -chdir=$(TF_DIR) init -input=false
+
+infra: infra-init ## Apply Terraform: lake bucket, pipeline user, warehouse schemas + roles
+	$(TF) -chdir=$(TF_DIR) apply -input=false -auto-approve
+
+infra-check: ## Fail if the running stack drifted from the Terraform config
+	$(TF) -chdir=$(TF_DIR) plan -input=false -detailed-exitcode -lock=false
 
 health: ## Check every service answers (retries for WAIT seconds)
 	$(PYTHON) -m railfall.healthcheck --wait $(WAIT)

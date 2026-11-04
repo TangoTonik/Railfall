@@ -2,7 +2,7 @@
 # Credentials come from `.env` (copy `.env.example`); defaults are for local dev only.
 name: railfall
 
-# MinIO no longer publishes container images, so both MinIO services share one
+# MinIO no longer publishes container images, so the MinIO service uses an
 # image built from pinned upstream source (see infra/minio/Dockerfile).
 x-minio-image: &minio-image
   build:
@@ -47,27 +47,8 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # One-shot job: create the lake bucket once MinIO is healthy. Idempotent
-  # (`--ignore-existing`), so `docker compose up` can be re-run safely.
-  # Day 3 moves bucket management to Terraform; this keeps `up` usable alone.
-  minio-init:
-    <<: *minio-image
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-railfall}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-railfall-secret}
-      LAKE_BUCKET: ${LAKE_BUCKET:-railfall-lake}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        mc alias set lake http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
-        mc mb --ignore-existing "lake/$$LAKE_BUCKET"
-        echo "bucket $$LAKE_BUCKET ready"
-    restart: "no"
+  # The lake bucket, pipeline user and warehouse schemas/roles are provisioned
+  # by Terraform (infra/terraform, `make infra`), not by a compose job.
 
 volumes:
   pg_data:
