@@ -6,3 +6,10 @@ __pycache__/
 .ruff_cache/
 .env
 data/
+
+# Terraform: state is local and per-environment; the lock file is committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
