@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 1 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 3 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -36,12 +36,15 @@ pytest
 
 ### Local platform (Postgres + MinIO)
 
-Needs Docker with Compose v2. The first `make up` builds MinIO from pinned
-source (no public images exist any more), which takes a few minutes.
+Needs Docker with Compose v2 and Terraform ≥ 1.6. The first `make up` builds
+MinIO from pinned source (no public images exist any more), which takes a few
+minutes.
 
 ```bash
-make up       # build, start Postgres + MinIO, wait until healthy, create the lake bucket
+make up       # build, start Postgres + MinIO, wait until healthy, terraform apply
 make health   # check every service answers
+make access   # prove each pipeline identity can do its job and nothing more
+make infra-check  # fail if the running stack drifted from the Terraform config
 make smoke    # also write to the lake and warehouse and read back
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
@@ -51,6 +54,15 @@ make down     # stop (keeps data); `make clean` also deletes the volumes
 | Postgres warehouse | `localhost:5432/warehouse` | `rail` / `rail` |
 | MinIO S3 API | http://localhost:9000 | `railfall` / `railfall-secret` |
 | MinIO console | http://localhost:9001 | same as above |
+
+Those are the admin accounts, used only by Terraform. Terraform
+(`infra/terraform`) provisions what the pipelines actually connect with:
+
+| Resource | Provisioned by Terraform |
+|---|---|
+| Lake bucket `railfall-lake` | `bronze/`, `silver/` prefixes; user `railfall-pipeline` limited to this bucket |
+| Warehouse schemas | `raw` (owner `railfall_loader`), `staging` + `marts` (owner `railfall_transformer`) |
+| Read access | transformer reads `raw`; `railfall_reader` (dashboards) reads `marts` only |
 
 ## How this project is built
 
@@ -63,5 +75,7 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 ```
 src/railfall/   Python package (config, ingestion, processing)
 tests/              Unit tests (pytest)
+infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
+infra/minio/        Source build of the pinned MinIO image
 docs/               Architecture decisions and workflow
 ```
