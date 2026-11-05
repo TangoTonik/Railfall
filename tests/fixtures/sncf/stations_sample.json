@@ -1,0 +1,7 @@
+[
+  {"nom": "Paris Gare de Lyon", "libellecourt": "PLY", "segment_drg": "A", "position_geographique": {"lon": 2.3731, "lat": 48.8443}, "codeinsee": "75112", "codes_uic": "87686006"},
+  {"nom": "Marseille Saint-Charles", "libellecourt": "MSC", "segment_drg": "A", "position_geographique": {"lon": 5.3804, "lat": 43.3027}, "codeinsee": "13201", "codes_uic": "87751008"},
+  {"nom": "Bordeaux Saint-Jean", "libellecourt": "BXJ", "segment_drg": "A", "position_geographique": {"lon": -0.5566, "lat": 44.8259}, "codeinsee": "33063", "codes_uic": "87581009"},
+  {"nom": "Lyon Part-Dieu", "libellecourt": "LPD", "segment_drg": "A", "position_geographique": {"lon": 4.8596, "lat": 45.7606}, "codeinsee": "69383", "codes_uic": "87723197"},
+  {"nom": "Saint-Rambert-en-Bugey", "libellecourt": "SRB", "segment_drg": "C", "position_geographique": null, "codeinsee": "01384", "codes_uic": "87743146"}
+]
