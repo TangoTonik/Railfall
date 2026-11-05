@@ -90,3 +90,21 @@ def test_station_without_coordinates_is_allowed_but_bad_point_is_not() -> None:
     records[0]["position_geographique"] = {"lat": "48.8"}
     with pytest.raises(SchemaError, match="row 0: bad position_geographique"):
         validate_export(STATIONS, json.dumps(records).encode(), min_rows=1)
+
+
+def test_negative_average_delay_is_valid_in_bronze() -> None:
+    # Regression: the real AQST export has routes whose mean arrival delay is
+    # negative (trains early on average), e.g. -30.5125 and -40.10925926.
+    records = json.loads(_load("punctuality_sample.json"))
+    records[0]["retard_moyen_arrivee"] = -30.5125
+    records[1]["retard_moyen_arrivee"] = None
+    result = validate_export(PUNCTUALITY, json.dumps(records).encode(), min_rows=1)
+    assert result.rows == len(records)
+
+
+@pytest.mark.parametrize("value", [True, "12.5", float("nan"), float("inf")])
+def test_average_delay_must_be_a_finite_number(value) -> None:
+    records = json.loads(_load("punctuality_sample.json"))
+    records[0]["retard_moyen_arrivee"] = value
+    with pytest.raises(SchemaError, match="row 0: bad retard_moyen_arrivee"):
+        validate_export(PUNCTUALITY, json.dumps(records).encode(), min_rows=1)

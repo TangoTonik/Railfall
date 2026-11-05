@@ -12,6 +12,7 @@ the fields downstream jobs rely on) before it is landed.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -37,6 +38,15 @@ def _is_count(value: Any) -> bool:
     if isinstance(value, bool):
         return False
     return value is None or (isinstance(value, int | float) and value >= 0)
+
+
+def _is_minutes(value: Any) -> bool:
+    # Average delays are signed: AQST averages over *all* trains, so a route where
+    # most trains arrive early has a negative mean (seen in the real export).
+    # Bronze only rejects values that are not numbers; outliers are silver's job.
+    if isinstance(value, bool):
+        return False
+    return value is None or (isinstance(value, int | float) and math.isfinite(value))
 
 
 def _is_text(value: Any) -> bool:
@@ -77,7 +87,7 @@ PUNCTUALITY = Dataset(
         "nb_train_prevu": _is_count,
         "nb_annulation": _is_count,
         "nb_train_retard_arrivee": _is_count,
-        "retard_moyen_arrivee": _is_count,
+        "retard_moyen_arrivee": _is_minutes,
     },
     # ~130 routes x 12 months x 7+ years of history.
     min_rows=5_000,
