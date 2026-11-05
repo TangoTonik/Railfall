@@ -19,7 +19,8 @@ TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up infra-init infra infra-check access health smoke logs ps down clean lint test
+.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf logs ps down \
+	clean lint test
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -52,6 +53,9 @@ health: ## Check every service answers (retries for WAIT seconds)
 
 smoke: ## Health checks plus a write/read round-trip on the lake and warehouse
 	$(PYTHON) -m railfall.healthcheck --wait $(WAIT) --write
+
+ingest-sncf: ## Download the SNCF exports and land them in bronze (idempotent per day)
+	$(PYTHON) -m railfall.ingest.run sncf $(INGEST_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) logs -f

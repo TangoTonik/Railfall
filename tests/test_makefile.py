@@ -25,7 +25,8 @@ def _make(*args: str) -> str:
 
 def test_help_lists_documented_targets():
     out = _make("help")
-    for target in ("up", "infra", "infra-check", "access", "health", "smoke", "down", "clean"):
+    targets = ("up", "infra", "infra-check", "access", "health", "smoke", "ingest-sncf", "down")
+    for target in (*targets, "clean"):
         assert f"  {target} " in out, f"`make help` misses {target}"
 
 
@@ -68,3 +69,8 @@ def test_health_wait_is_overridable():
 
 def test_access_runs_the_privilege_audit():
     assert "-m railfall.access" in _make("-n", "access")
+
+
+def test_ingest_sncf_runs_the_ingestion_cli_with_extra_args():
+    out = _make("-n", "ingest-sncf", "PYTHON=python", "INGEST_ARGS=--json --dataset stations")
+    assert out.strip() == "python -m railfall.ingest.run sncf --json --dataset stations"
