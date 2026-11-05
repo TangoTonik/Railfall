@@ -2,6 +2,7 @@
 
     python -m railfall.ingest.verify sncf                 # today's partition (UTC)
     python -m railfall.ingest.verify sncf --date 2026-11-05 --json
+    python -m railfall.ingest.verify sncf --list          # every bronze key, all days
 
 For every dataset of the source, the day's partition must hold exactly the
 payload and its manifest — no stray objects, no second version — and:
@@ -26,7 +27,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 
-from railfall.ingest.bronze import SHA_METADATA_KEY, bronze_prefix
+from railfall.ingest.bronze import BRONZE_PREFIX, SHA_METADATA_KEY, bronze_prefix
 from railfall.ingest.sncf import DATASETS, Dataset, SchemaError, validate_export
 
 SOURCES: dict[str, dict[str, Dataset]] = {"sncf": DATASETS}
@@ -47,6 +48,13 @@ def _list_keys(client, bucket: str, prefix: str) -> list[str]:
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix + "/"):
         keys.extend(obj["Key"] for obj in page.get("Contents", []))
     return sorted(keys)
+
+
+def list_source(client, bucket: str, source: str) -> list[str]:
+    """Every bronze key of a source, across all ingest days."""
+    if source not in SOURCES:
+        raise ValueError(f"unknown source: {source!r}")
+    return _list_keys(client, bucket, f"{BRONZE_PREFIX}/{source}")
 
 
 def verify_dataset(
@@ -145,9 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="ingest_date partition to check (YYYY-MM-DD); default: today (UTC)",
     )
     parser.add_argument("--json", action="store_true", help="print a JSON summary")
+    parser.add_argument(
+        "--list", action="store_true", help="only list the source's bronze keys, one per line"
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
+    if args.list:
+        for key in list_source(lake_client(settings), settings.lake_bucket, args.source):
+            print(key)
+        return 0
     checks = verify_source(
         lake_client(settings),
         settings.lake_bucket,

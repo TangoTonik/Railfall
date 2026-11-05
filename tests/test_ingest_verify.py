@@ -12,7 +12,7 @@ from moto import mock_aws
 
 from railfall.ingest.bronze import land
 from railfall.ingest.sncf import PUNCTUALITY, STATIONS, validate_export
-from railfall.ingest.verify import verify_dataset, verify_source
+from railfall.ingest.verify import list_source, verify_dataset, verify_source
 
 BUCKET = "railfall-lake"
 DAY = date(2026, 11, 5)
@@ -127,3 +127,14 @@ def test_unknown_source_or_dataset_is_rejected(s3) -> None:
         verify_source(s3, BUCKET, "meteo", DAY)
     with pytest.raises(ValueError, match="unknown sncf dataset"):
         verify_source(s3, BUCKET, "sncf", DAY, names=["trains"])
+
+
+def test_list_source_spans_every_ingest_day(s3) -> None:
+    _land_all(s3)
+    _land_all(s3, date(2026, 11, 6))
+    s3.put_object(Bucket=BUCKET, Key="bronze/sncfx/other.json", Body=b"[]")
+
+    keys = list_source(s3, BUCKET, "sncf")
+
+    assert len(keys) == 8
+    assert all(k.startswith("bronze/sncf/") for k in keys)

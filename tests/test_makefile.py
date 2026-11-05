@@ -25,7 +25,17 @@ def _make(*args: str) -> str:
 
 def test_help_lists_documented_targets():
     out = _make("help")
-    targets = ("up", "infra", "infra-check", "access", "health", "smoke", "ingest-sncf", "down")
+    targets = (
+        "up",
+        "infra",
+        "infra-check",
+        "access",
+        "health",
+        "smoke",
+        "ingest-sncf",
+        "verify-sncf",
+        "down",
+    )
     for target in (*targets, "clean"):
         assert f"  {target} " in out, f"`make help` misses {target}"
 

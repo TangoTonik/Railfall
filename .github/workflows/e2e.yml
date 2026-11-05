@@ -77,6 +77,36 @@ jobs:
         # Terraform: allowed actions must succeed, forbidden ones must be refused.
         run: make access
 
+      - name: Ingest SNCF open data into bronze (real download)
+        # Real Opendatasoft exports, real MinIO, the pipeline identity: the
+        # contract (fields, types, row floors) is enforced before anything lands.
+        run: |
+          make -s ingest-sncf INGEST_ARGS=--json | tee ingest-1.json
+          jq -e 'length == 2 and all(.[]; .ok and .status == "written")' ingest-1.json
+          jq -e '.[] | select(.dataset == "punctuality") | .rows >= 5000' ingest-1.json
+          jq -e '.[] | select(.dataset == "stations") | .rows >= 2000' ingest-1.json
+
+      - name: Bronze holds what ingest reported
+        # Read back from the lake: one version per day, SHA-256 and row counts
+        # agree with the manifest, payload still passes the schema contract.
+        run: |
+          make --no-print-directory verify-sncf
+          make -s verify-sncf INGEST_ARGS=--json > verify.json
+          jq -e --slurpfile ing ingest-1.json \
+            '[.[] | {dataset, rows}] == [$ing[0][] | {dataset, rows}]' verify.json
+
+      - name: Re-running ingestion does not duplicate bronze
+        # Same day, same bytes -> skipped. If SNCF republished in between, the
+        # day's object is replaced, never doubled; verify proves it either way.
+        run: |
+          make -s ingest-sncf INGEST_ARGS=--json | tee ingest-2.json
+          jq -e 'all(.[]; .ok and (.status == "skipped" or .status == "replaced"))' ingest-2.json
+          make --no-print-directory verify-sncf
+          # Whole-prefix count, as the pipeline user: 2 datasets x (payload + manifest).
+          keys=$(make -s verify-sncf INGEST_ARGS=--list)
+          echo "$keys"
+          test "$(echo "$keys" | wc -l)" -eq 4
+
       - name: Re-apply is a no-op
         run: |
           make infra

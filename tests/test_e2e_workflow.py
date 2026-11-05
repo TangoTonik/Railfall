@@ -55,3 +55,14 @@ def test_privileges_are_audited_after_apply_and_after_restart(steps):
     assert audits, "e2e must run the least-privilege audit"
     assert min(audits) > _index(steps, "make up")
     assert max(audits) >= _index(steps, "docker compose down\n")
+
+
+def test_sncf_ingestion_is_real_verified_and_rerun(steps):
+    runs = [s.get("run", "") for s in steps]
+    ingests = [i for i, r in enumerate(runs) if "make -s ingest-sncf" in r]
+    verifies = [i for i, r in enumerate(runs) if "verify-sncf" in r]
+    assert len(ingests) == 2, "ingest twice to prove re-runs do not duplicate bronze"
+    assert _index(steps, "make up") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
+    # Row floors are asserted on the real download, not left to the fixtures.
+    assert ".rows >= 5000" in runs[ingests[0]] and ".rows >= 2000" in runs[ingests[0]]
+    assert "--min-rows" not in "".join(runs)
