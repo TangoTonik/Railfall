@@ -97,3 +97,44 @@ next actor in the chain without a re-apply. `destroy` protections
 
 Unit tests parse the HCL with `python-hcl2` so the layout, grants and secret
 hygiene are checked on every push without a Terraform binary.
+
+## Day 4 — SNCF ingestion into bronze
+
+**Full JSON export, not paged `records`.**
+Both SNCF datasets are small (~10k punctuality rows, ~2.8k stations), so one
+call to the Opendatasoft `exports/json` endpoint returns everything. The
+`records` endpoint caps at 100 rows per page and a 10k offset, which would mean
+pagination code that buys nothing. The downloader is stdlib `urllib` with
+timeouts and exponential backoff on 408/425/429/5xx and connection resets;
+other 4xx fail fast because they are bugs in our request.
+
+**Validate before landing, store byte-for-byte.**
+Each export is checked against a small per-dataset contract (required fields,
+types, a row floor that catches truncated downloads) before it touches the
+lake, so bronze never holds an error page or half a file. What lands is the raw
+payload, unchanged: bronze is the replayable source of truth, cleaning is
+silver's job (Day 6).
+
+**The contract is structural, not a data-quality gate.**
+The first real e2e run rejected the punctuality export over two rows with a
+*negative* `retard_moyen_arrivee` (-30.5 and -40.1 min). The AQST average runs
+over all trains, early ones included, so a negative mean is a legitimate value
+(even if those two look like outliers). Bronze now only requires a finite
+number there; counts must still be non-negative integers-or-null and booleans
+are rejected outright. Plausibility rules (outlier delays, cancellations above
+planned trains) belong in silver and in the Day 14 quality checks, where a bad
+row can be flagged instead of blocking a whole dataset.
+
+**One version per dataset per day, idempotent by content hash.**
+Layout: `bronze/sncf/<dataset>/ingest_date=YYYY-MM-DD/<dataset>.json` plus a
+`_manifest.json` (rows, SHA-256, source URL, landed-at). Re-running on the
+same day with the same bytes is a no-op (`skipped`); different bytes (the
+source was republished) replace that day's object. Day-partitioned history
+keeps earlier snapshots for replays without duplicating within a day.
+
+**Proven on the real portal in e2e.**
+The workflow downloads both datasets as the least-privilege `railfall-pipeline`
+lake user, asserts row floors (≥ 5,000 punctuality, ≥ 2,000 stations), reads
+bronze back with `verify-sncf` (manifest hash = object hash = contract still
+holds), then re-runs ingestion and asserts the prefix still holds exactly one
+payload and one manifest per dataset.

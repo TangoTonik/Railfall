@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 3 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 4 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -46,6 +46,8 @@ make health   # check every service answers
 make access   # prove each pipeline identity can do its job and nothing more
 make infra-check  # fail if the running stack drifted from the Terraform config
 make smoke    # also write to the lake and warehouse and read back
+make ingest-sncf  # download SNCF punctuality + stations into bronze (idempotent per day)
+make verify-sncf  # re-check today's bronze objects against their manifests and contract
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -63,6 +65,17 @@ Those are the admin accounts, used only by Terraform. Terraform
 | Lake bucket `railfall-lake` | `bronze/`, `silver/` prefixes; user `railfall-pipeline` limited to this bucket |
 | Warehouse schemas | `raw` (owner `railfall_loader`), `staging` + `marts` (owner `railfall_transformer`) |
 | Read access | transformer reads `raw`; `railfall_reader` (dashboards) reads `marts` only |
+
+### Bronze layout
+
+```
+s3://railfall-lake/bronze/sncf/<dataset>/ingest_date=YYYY-MM-DD/<dataset>.json
+s3://railfall-lake/bronze/sncf/<dataset>/ingest_date=YYYY-MM-DD/_manifest.json
+```
+
+Raw exports are stored byte-for-byte after a schema check; the manifest records
+row count, SHA-256 and source URL. Datasets: `punctuality`
+(`regularite-mensuelle-tgv-aqst`) and `stations` (`gares-de-voyageurs`).
 
 ## How this project is built
 
