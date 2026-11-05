@@ -33,6 +33,9 @@ def _is_month(value: Any) -> bool:
 
 
 def _is_count(value: Any) -> bool:
+    # bool is an int subclass: `true` in a count column is a broken export, not 1.
+    if isinstance(value, bool):
+        return False
     return value is None or (isinstance(value, int | float) and value >= 0)
 
 

@@ -78,6 +78,13 @@ def test_missing_and_malformed_fields_are_reported_with_row_numbers() -> None:
     assert "row 3: bad nb_annulation=-1" in msg
 
 
+def test_boolean_is_not_a_count() -> None:
+    records = json.loads(_load("punctuality_sample.json"))
+    records[0]["nb_train_prevu"] = True
+    with pytest.raises(SchemaError, match="row 0: bad nb_train_prevu=True"):
+        validate_export(PUNCTUALITY, json.dumps(records).encode(), min_rows=1)
+
+
 def test_station_without_coordinates_is_allowed_but_bad_point_is_not() -> None:
     records = json.loads(_load("stations_sample.json"))
     records[0]["position_geographique"] = {"lat": "48.8"}
