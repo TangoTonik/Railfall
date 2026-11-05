@@ -24,7 +24,7 @@ of their endpoints.
 - [x] Day 1 — Repo, README, architecture plan, Python project setup, CI (lint + unit tests)
 - [x] Day 2 — Docker Compose stack (Postgres + MinIO) + `e2e` workflow that boots it in GitHub Actions and health-checks it
 - [x] Day 3 — Terraform (MinIO + Postgres providers) applied inside the e2e workflow
-- [ ] Day 4 — SNCF ingestion (punctuality + stations) → bronze in MinIO; e2e downloads the real data and asserts row counts / schema
+- [x] Day 4 — SNCF ingestion (punctuality + stations) → bronze in MinIO; e2e downloads the real data and asserts row counts / schema
 - [ ] Day 5 — Météo-France ingestion (daily, per department) → bronze; e2e on 2–3 real departments
 
 ## Week 2 · Processing & orchestration
