@@ -23,12 +23,12 @@ import argparse
 import hashlib
 import json
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 
 from railfall.ingest.bronze import BRONZE_PREFIX, SHA_METADATA_KEY, bronze_prefix
-from railfall.ingest.sncf import DATASETS, Dataset, SchemaError, validate_export
+from railfall.ingest.sncf import DATASETS, Dataset, validate_export
 
 SOURCES: dict[str, dict[str, Dataset]] = {"sncf": DATASETS}
 
@@ -57,22 +57,27 @@ def list_source(client, bucket: str, source: str) -> list[str]:
     return _list_keys(client, bucket, f"{BRONZE_PREFIX}/{source}")
 
 
-def verify_dataset(
+def _verify_partition(
     client,
     bucket: str,
     source: str,
-    dataset: Dataset,
+    name: str,
+    fmt: str,
     ingest_date: date,
-    *,
-    min_rows: int | None = None,
+    count_rows: Callable[[bytes], int],
 ) -> Check:
-    prefix = bronze_prefix(source, dataset.name, ingest_date)
-    key = f"{prefix}/{dataset.name}.json"
+    """Layout, checksums and manifest of one bronze partition; `count_rows` applies the contract.
+
+    `count_rows` validates the payload and returns its row count, raising
+    ValueError (every source's SchemaError is one) when the contract fails.
+    """
+    prefix = bronze_prefix(source, name, ingest_date)
+    key = f"{prefix}/{name}.{fmt}"
     manifest_key = f"{prefix}/_manifest.json"
 
     keys = _list_keys(client, bucket, prefix)
     if not keys:
-        return Check(dataset.name, ok=False, key=key, problems=[f"nothing under {prefix}/"])
+        return Check(name, ok=False, key=key, problems=[f"nothing under {prefix}/"])
     expected = sorted([key, manifest_key])
     problems: list[str] = []
     if keys != expected:
@@ -82,7 +87,7 @@ def verify_dataset(
             problems.append(f"unexpected objects: {', '.join(extra)}")
         if missing:
             problems.append(f"missing objects: {', '.join(missing)}")
-        return Check(dataset.name, ok=False, key=key, problems=problems)
+        return Check(name, ok=False, key=key, problems=problems)
 
     obj = client.get_object(Bucket=bucket, Key=key)
     payload = obj["Body"].read()
@@ -100,15 +105,34 @@ def verify_dataset(
 
     rows = 0
     try:
-        export = validate_export(dataset, payload, min_rows=min_rows)
-    except SchemaError as exc:
+        rows = count_rows(payload)
+    except ValueError as exc:
         problems.append(str(exc))
     else:
-        rows = export.rows
         if manifest.get("rows") != rows:
             problems.append(f"manifest rows {manifest.get('rows')} != payload rows {rows}")
 
-    return Check(dataset.name, ok=not problems, rows=rows, key=key, problems=problems)
+    return Check(name, ok=not problems, rows=rows, key=key, problems=problems)
+
+
+def verify_dataset(
+    client,
+    bucket: str,
+    source: str,
+    dataset: Dataset,
+    ingest_date: date,
+    *,
+    min_rows: int | None = None,
+) -> Check:
+    return _verify_partition(
+        client,
+        bucket,
+        source,
+        dataset.name,
+        "json",
+        ingest_date,
+        lambda payload: validate_export(dataset, payload, min_rows=min_rows).rows,
+    )
 
 
 def verify_source(
