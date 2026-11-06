@@ -48,6 +48,8 @@ make infra-check  # fail if the running stack drifted from the Terraform config
 make smoke    # also write to the lake and warehouse and read back
 make ingest-sncf  # download SNCF punctuality + stations into bronze (idempotent per day)
 make verify-sncf  # re-check today's bronze objects against their manifests and contract
+make ingest-meteo # download Météo-France daily files for METEO_DEPARTMENTS into bronze
+make verify-meteo # re-check today's Météo-France bronze against manifests and contract
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -76,6 +78,17 @@ s3://railfall-lake/bronze/sncf/<dataset>/ingest_date=YYYY-MM-DD/_manifest.json
 Raw exports are stored byte-for-byte after a schema check; the manifest records
 row count, SHA-256 and source URL. Datasets: `punctuality`
 (`regularite-mensuelle-tgv-aqst`) and `stations` (`gares-de-voyageurs`).
+
+```
+s3://railfall-lake/bronze/meteo/daily_<dept>_<period>/ingest_date=YYYY-MM-DD/daily_<dept>_<period>.csv.gz
+s3://railfall-lake/bronze/meteo/daily_<dept>_<period>/ingest_date=YYYY-MM-DD/_manifest.json
+```
+
+Météo-France BASE/QUOT `RR-T-Vent` files (rain, temperature, wind), one per
+department, resolved from the data.gouv.fr catalogue and kept as the original
+`csv.gz`. `METEO_DEPARTMENTS` (default `75,69,13`) picks the departments;
+`python -m railfall.ingest.run meteo --department 33 --period previous` fetches
+the long history for a backfill.
 
 ## How this project is built
 

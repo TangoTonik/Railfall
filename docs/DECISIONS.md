@@ -138,3 +138,49 @@ lake user, asserts row floors (≥ 5,000 punctuality, ≥ 2,000 stations), reads
 bronze back with `verify-sncf` (manifest hash = object hash = contract still
 holds), then re-runs ingestion and asserts the prefix still holds exactly one
 payload and one manifest per dataset.
+
+## Day 5 — Météo-France ingestion into bronze
+
+**Resolve file URLs from the data.gouv.fr catalogue, never hard-code them.**
+BASE/QUOT files are named after their period (`Q_75_latest-2025-2026_RR-T-Vent.csv.gz`,
+`Q_75_previous-1950-2024_…`), and those bounds move every January. A hard-coded
+URL would silently 404 once a year. Ingestion makes one call to the dataset API,
+parses every resource name with a strict regex and picks the department/period
+it needs; a missing department is a `ResolveError` reported per department.
+
+**Only the `RR-T-Vent` files.**
+Rain (`RR`), temperature (`TN`/`TX`/`TM`) and wind (`FFM`/`FXY`) are exactly
+what the punctuality-vs-weather question needs. The `autres-parametres` files
+(sunshine, humidity, snow…) roughly double the volume for columns no planned
+model uses; adding them later is a new resource filter, not a redesign.
+
+**`latest` by default, `previous` on demand.**
+The `latest` file (current + previous year) is refreshed daily and small enough
+for e2e; the `previous` history goes back to 1950 and is many times larger per
+department. The SNCF punctuality series starts in 2018, so the history is only
+needed for a backfill: `--period previous` is there for that, not for the
+daily run.
+
+**Three departments by default (`METEO_DEPARTMENTS=75,69,13`).**
+Paris, Lyon and Marseille are the endpoints of the busiest TGV axis, so they
+give Day 7's route ↔ department join something real to match while keeping a
+local run and e2e at three files instead of ~100. The full list is one env var
+away.
+
+**Same bronze contract as SNCF: validate, then store byte-for-byte.**
+Each file must be a complete gzip with the 58-column header, contain the
+columns silver needs, have every `NUM_POSTE` start with the requested
+department's prefix (Corsica's 2A/2B stations still use `20`), hold numbers or
+blanks in the measure columns (rain-gauge-only stations leave temperature and
+wind empty, which is legitimate) and clear a 1,000-row floor. The original
+`csv.gz` lands unchanged under
+`bronze/meteo/daily_<dept>_<period>/ingest_date=YYYY-MM-DD/` with a manifest,
+reusing Day 4's content-hash idempotency. One bad department is reported
+without blocking the others.
+
+**Proven on real data in e2e.**
+The workflow downloads the live files for 75, 69 and 13 as the pipeline
+identity, reads them back with `verify-meteo` (hash, size, contract against the
+department the object is stored under), re-runs ingestion and asserts exactly
+one payload and one manifest per department, then re-verifies both sources
+after a stack restart.
