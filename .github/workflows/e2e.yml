@@ -107,6 +107,33 @@ jobs:
           echo "$keys"
           test "$(echo "$keys" | wc -l)" -eq 4
 
+      - name: Ingest Météo-France daily files into bronze (real download)
+        # METEO_DEPARTMENTS from .env (75, 69, 13): resolved from the live
+        # data.gouv.fr catalogue, downloaded from object.files.data.gouv.fr and
+        # checked against the contract (columns, department, numeric measures).
+        run: |
+          make -s ingest-meteo INGEST_ARGS=--json | tee meteo-1.json
+          jq -e 'length == 3 and all(.[]; .ok and .status == "written")' meteo-1.json
+          jq -e '[.[].dataset] | sort == ["daily_13_latest", "daily_69_latest", "daily_75_latest"]' meteo-1.json
+          jq -e 'all(.[]; .rows >= 1000)' meteo-1.json
+
+      - name: Météo-France bronze holds what ingest reported
+        run: |
+          make --no-print-directory verify-meteo
+          make -s verify-meteo INGEST_ARGS=--json > verify-meteo.json
+          jq -e --slurpfile ing meteo-1.json \
+            '[.[] | {dataset, rows}] == [$ing[0][] | {dataset, rows}]' verify-meteo.json
+
+      - name: Re-running Météo-France ingestion does not duplicate bronze
+        run: |
+          make -s ingest-meteo INGEST_ARGS=--json | tee meteo-2.json
+          jq -e 'all(.[]; .ok and (.status == "skipped" or .status == "replaced"))' meteo-2.json
+          make --no-print-directory verify-meteo
+          # 3 departments x (csv.gz + manifest).
+          keys=$(make -s verify-meteo INGEST_ARGS=--list)
+          echo "$keys"
+          test "$(echo "$keys" | wc -l)" -eq 6
+
       - name: Re-apply is a no-op
         run: |
           make infra

@@ -66,3 +66,16 @@ def test_sncf_ingestion_is_real_verified_and_rerun(steps):
     # Row floors are asserted on the real download, not left to the fixtures.
     assert ".rows >= 5000" in runs[ingests[0]] and ".rows >= 2000" in runs[ingests[0]]
     assert "--min-rows" not in "".join(runs)
+
+
+def test_meteo_ingestion_is_real_verified_and_rerun(steps):
+    runs = [s.get("run", "") for s in steps]
+    ingests = [i for i, r in enumerate(runs) if "make -s ingest-meteo" in r]
+    verifies = [i for i, r in enumerate(runs) if "verify-meteo" in r]
+    assert len(ingests) == 2, "ingest twice to prove re-runs do not duplicate bronze"
+    assert _index(steps, "make up") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
+    # 2-3 real departments, each above the real contract floor.
+    first = runs[ingests[0]]
+    assert "length == 3" in first and ".rows >= 1000" in first
+    assert "--department" not in "".join(runs), "e2e uses METEO_DEPARTMENTS from .env"
+
