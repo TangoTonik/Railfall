@@ -3,6 +3,8 @@
     python -m railfall.ingest.verify sncf                 # today's partition (UTC)
     python -m railfall.ingest.verify sncf --date 2026-11-05 --json
     python -m railfall.ingest.verify sncf --list          # every bronze key, all days
+    python -m railfall.ingest.verify meteo                # METEO_DEPARTMENTS, latest period
+    python -m railfall.ingest.verify meteo --department 33 --period previous
 
 For every dataset of the source, the day's partition must hold exactly the
 payload and its manifest — no stray objects, no second version — and:
@@ -27,10 +29,13 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 
+from railfall.ingest import meteo
 from railfall.ingest.bronze import BRONZE_PREFIX, SHA_METADATA_KEY, bronze_prefix
 from railfall.ingest.sncf import DATASETS, Dataset, validate_export
 
-SOURCES: dict[str, dict[str, Dataset]] = {"sncf": DATASETS}
+SNCF_SOURCE = "sncf"
+METEO_SOURCE = "meteo"
+SOURCES = (METEO_SOURCE, SNCF_SOURCE)
 
 
 @dataclass(frozen=True)
@@ -146,21 +151,62 @@ def verify_source(
 ) -> list[Check]:
     if source not in SOURCES:
         raise ValueError(f"unknown source: {source!r}")
-    datasets = SOURCES[source]
-    selected = list(names) if names else list(datasets)
-    unknown = sorted(set(selected) - set(datasets))
+    if source != SNCF_SOURCE:
+        raise ValueError(f"{source} has no fixed dataset list; use verify_meteo")
+    selected = list(names) if names else list(DATASETS)
+    unknown = sorted(set(selected) - set(DATASETS))
     if unknown:
         raise ValueError(f"unknown {source} dataset(s): {', '.join(unknown)}")
     return [
-        verify_dataset(client, bucket, source, datasets[name], ingest_date, min_rows=min_rows)
+        verify_dataset(client, bucket, source, DATASETS[name], ingest_date, min_rows=min_rows)
         for name in selected
+    ]
+
+
+def verify_meteo(
+    client,
+    bucket: str,
+    ingest_date: date,
+    *,
+    departments: Iterable[str | int],
+    periods: Iterable[str] = ("latest",),
+    min_rows: int | None = None,
+) -> list[Check]:
+    """Check one `daily_<dept>_<period>` partition per requested department and period.
+
+    The file is re-validated against the department it is stored under, so a
+    file landed under the wrong department code fails here too.
+    """
+    wanted = list(dict.fromkeys(meteo.normalize_department(d) for d in departments))
+    if not wanted:
+        raise ValueError("no Météo-France department requested")
+    periods = tuple(periods)
+    for period in periods:
+        if period not in meteo.PERIODS:
+            raise ValueError(f"unknown period {period!r}, expected one of {meteo.PERIODS}")
+
+    def counter(department: str) -> Callable[[bytes], int]:
+        return lambda payload: meteo.validate_file(department, payload, min_rows=min_rows).rows
+
+    return [
+        _verify_partition(
+            client,
+            bucket,
+            METEO_SOURCE,
+            f"daily_{department}_{period}",
+            "csv.gz",
+            ingest_date,
+            counter(department),
+        )
+        for department in wanted
+        for period in periods
     ]
 
 
 def _format(check: Check) -> str:
     if check.ok:
-        return f"[  ok] {check.dataset:<12} {check.rows:>7} rows  {check.key}"
-    return f"[FAIL] {check.dataset:<12} " + "; ".join(check.problems)
+        return f"[  ok] {check.dataset:<16} {check.rows:>7} rows  {check.key}"
+    return f"[FAIL] {check.dataset:<16} " + "; ".join(check.problems)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -168,32 +214,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     from railfall.ingest.run import lake_client
 
     parser = argparse.ArgumentParser(description="Verify a bronze partition against its contract.")
-    parser.add_argument("source", choices=sorted(SOURCES))
-    parser.add_argument("--dataset", action="append", help="only this dataset (repeatable)")
-    parser.add_argument(
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--date",
         type=date.fromisoformat,
         default=None,
         help="ingest_date partition to check (YYYY-MM-DD); default: today (UTC)",
     )
-    parser.add_argument("--json", action="store_true", help="print a JSON summary")
-    parser.add_argument(
+    common.add_argument("--json", action="store_true", help="print a JSON summary")
+    common.add_argument(
         "--list", action="store_true", help="only list the source's bronze keys, one per line"
+    )
+    sources = parser.add_subparsers(dest="source", required=True, metavar="source")
+    sncf = sources.add_parser(SNCF_SOURCE, parents=[common], help="SNCF open data exports")
+    sncf.add_argument("--dataset", action="append", help="only this dataset (repeatable)")
+    weather = sources.add_parser(
+        METEO_SOURCE, parents=[common], help="Météo-France daily data per department"
+    )
+    weather.add_argument(
+        "--department",
+        action="append",
+        help="INSEE department code (repeatable); default: METEO_DEPARTMENTS",
+    )
+    weather.add_argument(
+        "--period",
+        action="append",
+        choices=meteo.PERIODS,
+        help="file period (repeatable); default: latest",
     )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
+    client = lake_client(settings)
     if args.list:
-        for key in list_source(lake_client(settings), settings.lake_bucket, args.source):
+        for key in list_source(client, settings.lake_bucket, args.source):
             print(key)
         return 0
-    checks = verify_source(
-        lake_client(settings),
-        settings.lake_bucket,
-        args.source,
-        args.date or datetime.now(UTC).date(),
-        names=args.dataset,
-    )
+    ingest_date = args.date or datetime.now(UTC).date()
+    if args.source == METEO_SOURCE:
+        try:
+            checks = verify_meteo(
+                client,
+                settings.lake_bucket,
+                ingest_date,
+                departments=args.department or settings.meteo_departments,
+                periods=args.period or ("latest",),
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+    else:
+        checks = verify_source(
+            client, settings.lake_bucket, args.source, ingest_date, names=args.dataset
+        )
     if args.json:
         print(json.dumps([asdict(c) for c in checks], indent=2))
     else:

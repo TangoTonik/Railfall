@@ -35,6 +35,7 @@ def test_help_lists_documented_targets():
         "ingest-sncf",
         "verify-sncf",
         "ingest-meteo",
+        "verify-meteo",
         "down",
     )
     for target in (*targets, "clean"):

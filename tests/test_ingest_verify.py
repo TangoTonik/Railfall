@@ -124,7 +124,7 @@ def test_manifest_row_count_mismatch_fails(s3) -> None:
 
 def test_unknown_source_or_dataset_is_rejected(s3) -> None:
     with pytest.raises(ValueError, match="unknown source"):
-        verify_source(s3, BUCKET, "meteo", DAY)
+        verify_source(s3, BUCKET, "weather", DAY)
     with pytest.raises(ValueError, match="unknown sncf dataset"):
         verify_source(s3, BUCKET, "sncf", DAY, names=["trains"])
 
