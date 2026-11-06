@@ -149,6 +149,8 @@ jobs:
           make health WAIT=60
           make infra-check
           make access
+          make --no-print-directory verify-sncf
+          make --no-print-directory verify-meteo
 
       - name: Dump service logs
         if: failure()

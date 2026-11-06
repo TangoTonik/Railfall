@@ -79,3 +79,8 @@ def test_meteo_ingestion_is_real_verified_and_rerun(steps):
     assert "length == 3" in first and ".rows >= 1000" in first
     assert "--department" not in "".join(runs), "e2e uses METEO_DEPARTMENTS from .env"
 
+
+def test_bronze_is_verified_after_restart(steps):
+    restart = _index(steps, "docker compose down\n")
+    for target in ("verify-sncf", "verify-meteo"):
+        assert any(target in s.get("run", "") for s in steps[restart:]), target
