@@ -1,0 +1,94 @@
+{
+  "id": "6569b51ae64326786e4e8e1a",
+  "slug": "donnees-climatologiques-de-base-quotidiennes",
+  "title": "Données climatologiques de base - quotidiennes",
+  "organization": {
+    "name": "Météo-France"
+  },
+  "license": "lov2",
+  "resources": [
+    {
+      "id": "r-000",
+      "title": "QUOT_departement_13_periode_1950-2024_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_13_previous-1950-2024_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-001",
+      "title": "QUOT_departement_13_periode_2025-2026_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_13_latest-2025-2026_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-002",
+      "title": "QUOT_departement_13_periode_1950-2024_autres-parametres",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_13_previous-1950-2024_autres-parametres.csv.gz"
+    },
+    {
+      "id": "r-003",
+      "title": "QUOT_departement_2A_periode_1950-2024_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_2A_previous-1950-2024_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-004",
+      "title": "QUOT_departement_2A_periode_2025-2026_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_2A_latest-2025-2026_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-005",
+      "title": "QUOT_departement_2A_periode_1950-2024_autres-parametres",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_2A_previous-1950-2024_autres-parametres.csv.gz"
+    },
+    {
+      "id": "r-006",
+      "title": "QUOT_departement_75_periode_1950-2024_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_75_previous-1950-2024_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-007",
+      "title": "QUOT_departement_75_periode_2025-2026_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_75_latest-2025-2026_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-008",
+      "title": "QUOT_departement_75_periode_1950-2024_autres-parametres",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_75_previous-1950-2024_autres-parametres.csv.gz"
+    },
+    {
+      "id": "r-009",
+      "title": "QUOT_departement_13_periode_2024-2025_RR-T-Vent",
+      "format": "csv.gz",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_13_latest-2024-2025_RR-T-Vent.csv.gz"
+    },
+    {
+      "id": "r-010",
+      "title": "Documentation des champs",
+      "format": "csv",
+      "filetype": "remote",
+      "url": "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/QUOT/Q_descriptif_champs_RR-T-Vent.csv"
+    },
+    {
+      "id": "r-doc",
+      "title": "Notice",
+      "format": "pdf",
+      "url": null
+    }
+  ]
+}
