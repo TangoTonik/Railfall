@@ -18,8 +18,13 @@ downloaded file is the department table we asked for before it is landed.
 
 from __future__ import annotations
 
+import csv
+import gzip
+import io
 import json
+import math
 import re
+import zlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -143,3 +148,114 @@ def select_files(
     if missing:
         raise ResolveError("no RR-T-Vent file on data.gouv.fr for " + ", ".join(missing))
     return selected
+
+
+# Columns downstream jobs rely on. The real files carry ~58 columns (every value
+# has a Q* quality flag next to it); extra columns are fine, missing ones are not.
+REQUIRED_COLUMNS = (
+    "NUM_POSTE",
+    "NOM_USUEL",
+    "LAT",
+    "LON",
+    "ALTI",
+    "AAAAMMJJ",
+    "RR",  # precipitation, mm
+    "TN",  # min temperature, °C
+    "TX",  # max temperature, °C
+    "TM",  # mean temperature, °C
+    "FFM",  # mean wind speed at 10 m, m/s
+    "FXY",  # max hourly-mean wind speed, m/s
+)
+MEASURES = ("RR", "TN", "TX", "TM", "FFM", "FXY")
+
+# A department "latest" file is ~20-60 stations x 365-730 days; anything far below
+# this is a truncated download or an empty placeholder.
+MIN_ROWS = 1_000
+
+_DAY = re.compile(r"^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$")
+
+
+def _is_number(value: str, *, empty_ok: bool = True) -> bool:
+    if value == "":
+        return empty_ok
+    try:
+        return math.isfinite(float(value))
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class ValidatedFile:
+    department: str
+    rows: int
+    stations: int
+    first_day: str
+    last_day: str
+    columns: tuple[str, ...]
+
+
+def _gunzip(payload: bytes, name: str) -> bytes:
+    try:
+        return gzip.decompress(payload)
+    except (OSError, EOFError, zlib.error) as exc:
+        raise SchemaError(f"{name}: not a complete gzip file ({exc})") from exc
+
+
+def validate_file(department: str, payload: bytes, *, min_rows: int | None = None) -> ValidatedFile:
+    """Check a department `csv.gz` against the contract; raise SchemaError if it fails.
+
+    `min_rows` overrides the floor (unit tests use small fixtures).
+    """
+    department = normalize_department(department)
+    name = f"meteo/{department}"
+    text = _gunzip(payload, name).decode("utf-8", errors="replace")
+    reader = csv.reader(io.StringIO(text), delimiter=";")
+    header = [column.strip() for column in next(reader, [])]
+    missing = [column for column in REQUIRED_COLUMNS if column not in header]
+    if missing:
+        raise SchemaError(f"{name}: missing columns {missing} (header: {header[:8]}...)")
+    pos = {column: header.index(column) for column in REQUIRED_COLUMNS}
+    prefix = station_prefix(department)
+
+    problems: list[str] = []
+    stations: set[str] = set()
+    rows = 0
+    first_day = last_day = ""
+    for line_no, row in enumerate(reader, start=2):
+        if not row:
+            continue
+        rows += 1
+        if len(row) < len(header):
+            problems.append(f"line {line_no}: {len(row)} fields, expected {len(header)}")
+        else:
+            station, day = row[pos["NUM_POSTE"]].strip(), row[pos["AAAAMMJJ"]].strip()
+            if not (station.isdigit() and len(station) == 8 and station.startswith(prefix)):
+                problems.append(f"line {line_no}: NUM_POSTE={station!r} not in {department}")
+            if not _DAY.match(day):
+                problems.append(f"line {line_no}: bad AAAAMMJJ={day!r}")
+            else:
+                first_day = min(first_day or day, day)
+                last_day = max(last_day, day)
+            for column in ("LAT", "LON", "ALTI"):
+                if not _is_number(row[pos[column]].strip(), empty_ok=False):
+                    problems.append(f"line {line_no}: bad {column}={row[pos[column]]!r}")
+            for column in MEASURES:
+                if not _is_number(row[pos[column]].strip()):
+                    problems.append(f"line {line_no}: bad {column}={row[pos[column]]!r}")
+            stations.add(station)
+        if len(problems) >= 10:
+            raise SchemaError(f"{name}: " + "; ".join(problems[:10]))
+    if problems:
+        raise SchemaError(f"{name}: " + "; ".join(problems))
+
+    floor = MIN_ROWS if min_rows is None else min_rows
+    if rows < max(floor, 1):
+        raise SchemaError(f"{name}: {rows} rows, expected at least {floor}")
+    return ValidatedFile(
+        department=department,
+        rows=rows,
+        stations=len(stations),
+        first_day=first_day,
+        last_day=last_day,
+        columns=tuple(header),
+    )
