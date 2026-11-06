@@ -25,7 +25,7 @@ of their endpoints.
 - [x] Day 2 — Docker Compose stack (Postgres + MinIO) + `e2e` workflow that boots it in GitHub Actions and health-checks it
 - [x] Day 3 — Terraform (MinIO + Postgres providers) applied inside the e2e workflow
 - [x] Day 4 — SNCF ingestion (punctuality + stations) → bronze in MinIO; e2e downloads the real data and asserts row counts / schema
-- [ ] Day 5 — Météo-France ingestion (daily, per department) → bronze; e2e on 2–3 real departments
+- [x] Day 5 — Météo-France ingestion (daily, per department) → bronze; e2e on 2–3 real departments
 
 ## Week 2 · Processing & orchestration
 - [ ] Day 6 — PySpark: clean and type bronze → silver (Parquet), run in e2e on the real bronze data
