@@ -22,7 +22,7 @@ from datetime import UTC, date, datetime
 BRONZE_PREFIX = "bronze"
 SHA_METADATA_KEY = "sha256"
 
-_CONTENT_TYPES = {"json": "application/json", "csv": "text/csv"}
+_CONTENT_TYPES = {"json": "application/json", "csv": "text/csv", "csv.gz": "application/gzip"}
 
 
 @dataclass(frozen=True)

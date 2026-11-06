@@ -34,6 +34,7 @@ def test_help_lists_documented_targets():
         "smoke",
         "ingest-sncf",
         "verify-sncf",
+        "ingest-meteo",
         "down",
     )
     for target in (*targets, "clean"):
@@ -84,3 +85,8 @@ def test_access_runs_the_privilege_audit():
 def test_ingest_sncf_runs_the_ingestion_cli_with_extra_args():
     out = _make("-n", "ingest-sncf", "PYTHON=python", "INGEST_ARGS=--json --dataset stations")
     assert out.strip() == "python -m railfall.ingest.run sncf --json --dataset stations"
+
+
+def test_ingest_meteo_runs_the_ingestion_cli_with_extra_args():
+    out = _make("-n", "ingest-meteo", "PYTHON=python", "INGEST_ARGS=--department 33 --json")
+    assert out.strip() == "python -m railfall.ingest.run meteo --department 33 --json"
