@@ -52,3 +52,17 @@ def test_secrets_hidden_from_repr():
     )
     assert "s3cr3t" not in text
     assert "pw@h" not in text
+
+
+def test_meteo_departments_default_to_rail_hubs():
+    assert Settings.from_env({}).meteo_departments == ("75", "69", "13")
+
+
+def test_meteo_departments_parsed_and_deduplicated():
+    s = Settings.from_env({"METEO_DEPARTMENTS": " 33, 2A,33 ,,6"})
+    assert s.meteo_departments == ("33", "2A", "6")
+
+
+def test_empty_meteo_departments_rejected():
+    with pytest.raises(ValueError, match="METEO_DEPARTMENTS"):
+        Settings.from_env({"METEO_DEPARTMENTS": " , "})

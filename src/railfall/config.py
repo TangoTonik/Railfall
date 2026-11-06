@@ -20,6 +20,9 @@ class Settings:
     )
     http_timeout_s: float = 30.0
     http_max_retries: int = 3
+    # Météo-France departments to ingest. Default: the three biggest rail hubs
+    # (Paris, Lyon, Marseille); the full list is ~100 files per period.
+    meteo_departments: tuple[str, ...] = ("75", "69", "13")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -38,6 +41,15 @@ class Settings:
                 raise ValueError(f"{name} must be >= 0, got {value}")
             return value
 
+        def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+            raw = env.get(name)
+            if raw is None:
+                return default
+            items = tuple(dict.fromkeys(i.strip() for i in raw.split(",") if i.strip()))
+            if not items:
+                raise ValueError(f"{name} must list at least one value")
+            return items
+
         return cls(
             lake_endpoint_url=env.get("LAKE_ENDPOINT_URL", defaults.lake_endpoint_url),
             lake_bucket=env.get("LAKE_BUCKET", defaults.lake_bucket),
@@ -50,4 +62,5 @@ class Settings:
             warehouse_dsn=env.get("WAREHOUSE_DSN", defaults.warehouse_dsn),
             http_timeout_s=_float("HTTP_TIMEOUT_S", defaults.http_timeout_s),
             http_max_retries=_int("HTTP_MAX_RETRIES", defaults.http_max_retries),
+            meteo_departments=_list("METEO_DEPARTMENTS", defaults.meteo_departments),
         )
