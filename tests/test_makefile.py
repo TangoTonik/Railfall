@@ -36,6 +36,7 @@ def test_help_lists_documented_targets():
         "verify-sncf",
         "ingest-meteo",
         "verify-meteo",
+        "silver",
         "down",
     )
     for target in (*targets, "clean"):
@@ -91,3 +92,8 @@ def test_ingest_sncf_runs_the_ingestion_cli_with_extra_args():
 def test_ingest_meteo_runs_the_ingestion_cli_with_extra_args():
     out = _make("-n", "ingest-meteo", "PYTHON=python", "INGEST_ARGS=--department 33 --json")
     assert out.strip() == "python -m railfall.ingest.run meteo --department 33 --json"
+
+
+def test_silver_runs_the_spark_job_with_extra_args():
+    out = _make("-n", "silver", "PYTHON=python", "SILVER_ARGS=--table stations --json")
+    assert "python -m railfall.spark.job --table stations --json" in out

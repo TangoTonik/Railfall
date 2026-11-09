@@ -19,7 +19,7 @@ TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo logs ps down \
+.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -65,6 +65,9 @@ ingest-meteo: ## Download Météo-France daily files (METEO_DEPARTMENTS) into br
 
 verify-meteo: ## Read today's Météo-France bronze back and check it against the contract
 	$(PYTHON) -m railfall.ingest.verify meteo $(INGEST_ARGS)
+
+silver: ## Build silver Parquet tables from bronze with Spark (SILVER_ARGS=--json, --table ...)
+	$(PYTHON) -m railfall.spark.job $(SILVER_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) logs -f
