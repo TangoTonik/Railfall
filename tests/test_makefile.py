@@ -97,3 +97,8 @@ def test_ingest_meteo_runs_the_ingestion_cli_with_extra_args():
 def test_silver_runs_the_spark_job_with_extra_args():
     out = _make("-n", "silver", "PYTHON=python", "SILVER_ARGS=--table stations --json")
     assert "python -m railfall.spark.job --table stations --json" in out
+
+
+def test_verify_silver_runs_the_contract_check():
+    out = _make("-n", "verify-silver", "PYTHON=python", "SILVER_ARGS=--json")
+    assert "python -m railfall.spark.verify --json" in out

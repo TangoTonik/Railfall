@@ -178,6 +178,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run date used for the quarantine partition; default: today (UTC)",
     )
     parser.add_argument("--json", action="store_true", help="print a JSON summary")
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="also write the JSON summary to this file (JVM output can share stdout)",
+    )
     args = parser.parse_args(argv)
 
     from railfall.spark.session import build_session, lake_uri
@@ -197,8 +203,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         spark.stop()
 
+    payload = json.dumps([asdict(r) for r in results], indent=2)
+    if args.report:
+        args.report.write_text(payload + "\n")
     if args.json:
-        print(json.dumps([asdict(r) for r in results], indent=2))
+        print(payload)
     else:
         for r in results:
             print(_format(r))
