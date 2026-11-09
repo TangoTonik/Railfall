@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 4 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 6 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -36,7 +36,8 @@ pytest
 
 ### Local platform (Postgres + MinIO)
 
-Needs Docker with Compose v2 and Terraform ≥ 1.6. The first `make up` builds
+Needs Docker with Compose v2 and Terraform ≥ 1.6; the silver job also needs
+Java 17+ and `pip install -e ".[spark]"`. The first `make up` builds
 MinIO from pinned source (no public images exist any more), which takes a few
 minutes.
 
@@ -50,6 +51,8 @@ make ingest-sncf  # download SNCF punctuality + stations into bronze (idempotent
 make verify-sncf  # re-check today's bronze objects against their manifests and contract
 make ingest-meteo # download Météo-France daily files for METEO_DEPARTMENTS into bronze
 make verify-meteo # re-check today's Météo-France bronze against manifests and contract
+make silver       # Spark: clean, type and de-duplicate bronze into silver Parquet
+make verify-silver # read silver back: schema contract, unique non-null keys, not empty
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -90,6 +93,26 @@ department, resolved from the data.gouv.fr catalogue and kept as the original
 `python -m railfall.ingest.run meteo --department 33 --period previous` fetches
 the long history for a backfill.
 
+### Silver layout
+
+```
+s3://railfall-lake/silver/punctuality_monthly/year=YYYY/part-*.parquet
+s3://railfall-lake/silver/weather_daily/department=DD/year=YYYY/part-*.parquet
+s3://railfall-lake/silver/stations/part-*.parquet
+s3://railfall-lake/silver/_rejected/<table>/run_date=YYYY-MM-DD/part-*.parquet
+```
+
+| Table | Key | Content |
+|---|---|---|
+| `punctuality_monthly` | month, service, departure, arrival | typed counts, `route_id`, `trains_run`, arrival punctuality rate |
+| `weather_daily` | station_id, day | rain, min/max/mean temperature, wind; doubtful or impossible values nulled |
+| `stations` | uic_code | name, accent-free `name_key`, department, coordinates |
+
+SNCF tables are rebuilt from the newest bronze snapshot; weather reads every
+bronze day and keeps the newest row per station-day. Writes overwrite
+partitions, so re-running never appends. Rows with an untrustworthy key go to
+`_rejected/` with a `reject_reason` instead of being dropped silently.
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -99,7 +122,7 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 ## Project layout
 
 ```
-src/railfall/   Python package (config, ingestion, processing)
+src/railfall/       Python package (config, ingestion, Spark silver jobs)
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
 infra/minio/        Source build of the pinned MinIO image

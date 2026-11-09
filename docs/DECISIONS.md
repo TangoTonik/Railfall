@@ -184,3 +184,49 @@ identity, reads them back with `verify-meteo` (hash, size, contract against the
 department the object is stored under), re-runs ingestion and asserts exactly
 one payload and one manifest per department, then re-verifies both sources
 after a stack restart.
+
+## Day 6 — PySpark: bronze → silver
+
+**Plain DataFrame transforms, one module per table, valid/rejected split.**
+`punctuality`, `weather` and `stations` each expose `read_bronze` and a pure
+`to_silver(df) -> Split(valid, rejected)`. The transforms never touch storage,
+so they run on fixtures with a one-core local session in unit tests and on the
+real lake in e2e unchanged. Rows whose key cannot be trusted (bad month or day,
+missing station, station outside its department, impossible counts) go to
+`silver/_rejected/<table>/run_date=…` with a `reject_reason`; individual
+measures that are doubtful (Météo-France quality flag 2) or physically
+impossible are nulled instead, so one bad sensor does not cost the whole day.
+
+**Explicit schemas, no inference.** Bronze JSON is read with a declared schema
+and Météo-France CSVs as strings cast column by column: inference guessed
+different types for the same column from one department to the next.
+
+**Which bronze to read.** SNCF exports are full snapshots, so silver is rebuilt
+from the newest `ingest_date` only; older days are history, not extra rows.
+Météo-France `latest`/`previous` files overlap, so every day is read and one
+row per station-day is kept (prefer `latest`, then newest ingest).
+
+**Idempotency by partition overwrite.** `partitionOverwriteMode=dynamic`
+(punctuality by year, weather by department × year) means a run replaces the
+partitions it produces and nothing else. No bookkeeping table is needed for a
+re-run to be harmless; e2e proves it by running the job twice.
+
+**S3A against MinIO, hadoop-aws pulled at start-up.** Spark 4.0 ships Hadoop
+3.4.1, so the matching `hadoop-aws` package is fetched through
+`spark.jars.packages` rather than vendoring jars; path-style access and SSL
+only for `https://` endpoints. The job runs as the least-privilege
+`railfall-pipeline` user, whose bucket policy already allows the
+put/delete that S3A's commit needs.
+
+**An independent read-back check (`make verify-silver`).** The job's own
+summary could agree with itself while the files are wrong, so a separate
+command re-reads the Parquet and checks a per-table contract: required columns
+with exact Spark types, business key never null and never repeated, table not
+empty. e2e asserts row floors on the real data, that silver punctuality never
+exceeds the bronze rows it came from, that a second run yields identical counts
+with keys still unique, and that silver survives a stack restart.
+
+**JSON reports go to a file (`--report`).** The JVM started by PySpark inherits
+stdout, so Ivy/Spark output could interleave with a printed JSON summary; e2e
+reads the report file instead of parsing stdout.
+
