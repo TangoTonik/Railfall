@@ -103,7 +103,12 @@ def _reject_reason() -> Column:
             "missing_station",
         )
         .when(planned.isNull() | (planned <= 0), "no_planned_trains")
-        .when(cancelled < 0, "negative_count")
+        .when(
+            (cancelled < 0)
+            | (F.col("trains_late_departure") < 0)
+            | (F.col("trains_late_arrival") < 0),
+            "negative_count",
+        )
         .when(cancelled > planned, "cancelled_over_planned")
         .when(F.col("trains_late_arrival") > planned - cancelled, "late_over_run")
     )

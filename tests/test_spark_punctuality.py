@@ -67,6 +67,8 @@ def test_duplicate_route_months_are_collapsed(spark, tmp_path) -> None:
         ({"gare_arrivee": "   "}, "missing_station"),
         ({"nb_train_prevu": 0}, "no_planned_trains"),
         ({"nb_annulation": 900}, "cancelled_over_planned"),
+        ({"nb_train_retard_arrivee": -4}, "negative_count"),
+        ({"nb_train_depart_retard": -1}, "negative_count"),
         ({"nb_train_retard_arrivee": 700}, "late_over_run"),
     ],
 )
