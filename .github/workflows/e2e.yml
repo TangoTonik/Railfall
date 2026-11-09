@@ -23,8 +23,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install railfall
-        run: pip install -e .
+      - uses: actions/setup-java@v4
+        with:
+          # Spark 4.0 needs Java 17+.
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install railfall (with Spark)
+        run: pip install -e ".[spark]"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -134,6 +140,40 @@ jobs:
           echo "$keys"
           test "$(echo "$keys" | wc -l)" -eq 6
 
+      - name: Build silver from the real bronze (Spark over S3A)
+        # Real Spark reading the real bronze through S3A as the pipeline user.
+        # Reports go to files: the JVM shares stdout with Python.
+        run: |
+          make --no-print-directory silver SILVER_ARGS="--report silver-1.json"
+          cat silver-1.json
+          jq -e 'length == 3 and all(.[]; .ok)' silver-1.json
+          jq -e '.[] | select(.table == "punctuality_monthly") | .rows >= 4000' silver-1.json
+          jq -e '.[] | select(.table == "stations") | .rows >= 1500' silver-1.json
+          jq -e '.[] | select(.table == "weather_daily") | .rows >= 3000' silver-1.json
+          # Silver only cleans and de-duplicates: it never invents punctuality rows.
+          jq -e --slurpfile ing ingest-1.json '
+            (.[] | select(.table == "punctuality_monthly") | .rows + .rejected)
+            <= ($ing[0][] | select(.dataset == "punctuality") | .rows)' silver-1.json
+
+      - name: Silver passes its contract (schema, unique keys)
+        run: |
+          make --no-print-directory verify-silver SILVER_ARGS="--report verify-silver-1.json"
+          jq -e 'length == 3 and all(.[]; .ok and .duplicate_keys == 0 and .null_keys == 0)' \
+            verify-silver-1.json
+          jq -e --slurpfile job silver-1.json \
+            '[.[] | {table, rows}] == [$job[0][] | {table, rows}]' verify-silver-1.json
+
+      - name: Re-running silver does not duplicate rows
+        # Partition overwrite: same bronze in, same row counts out, keys still unique.
+        run: |
+          make --no-print-directory silver SILVER_ARGS="--report silver-2.json"
+          jq -e --slurpfile one silver-1.json \
+            '[.[] | {table, rows, rejected}] == [$one[0][] | {table, rows, rejected}]' silver-2.json
+          make --no-print-directory verify-silver SILVER_ARGS="--report verify-silver-2.json"
+          jq -e --slurpfile one verify-silver-1.json \
+            '[.[] | {table, rows}] == [$one[0][] | {table, rows}] and all(.[]; .ok)' \
+            verify-silver-2.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -151,6 +191,7 @@ jobs:
           make access
           make --no-print-directory verify-sncf
           make --no-print-directory verify-meteo
+          make --no-print-directory verify-silver
 
       - name: Dump service logs
         if: failure()

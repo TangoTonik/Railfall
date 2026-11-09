@@ -84,3 +84,22 @@ def test_bronze_is_verified_after_restart(steps):
     restart = _index(steps, "docker compose down\n")
     for target in ("verify-sncf", "verify-meteo"):
         assert any(target in s.get("run", "") for s in steps[restart:]), target
+
+
+def test_silver_is_built_on_real_bronze_verified_and_rerun(steps):
+    runs = [s.get("run", "") for s in steps]
+    builds = [i for i, r in enumerate(runs) if "make --no-print-directory silver " in r]
+    checks = [i for i, r in enumerate(runs) if "verify-silver" in r]
+    assert len(builds) == 2, "build silver twice to prove re-runs do not duplicate rows"
+    last_ingest = max(i for i, r in enumerate(runs) if "ingest-meteo" in r or "ingest-sncf" in r)
+    assert last_ingest < builds[0] < checks[0] < builds[1] <= checks[-1]
+    assert "duplicate_keys == 0" in "".join(runs)
+    assert "--root" not in "".join(runs), "e2e reads the real lake, not a local directory"
+
+
+def test_spark_has_a_jvm_and_silver_survives_restart(steps):
+    java = _step(steps, "actions/setup-java@")
+    assert int(java["with"]["java-version"]) >= 17
+    assert any("[spark]" in s.get("run", "") for s in steps)
+    restart = _index(steps, "docker compose down\n")
+    assert any("verify-silver" in s.get("run", "") for s in steps[restart:])
