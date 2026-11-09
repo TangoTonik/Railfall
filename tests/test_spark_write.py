@@ -79,3 +79,20 @@ def test_rejected_rows_are_quarantined_per_run_date(spark, tmp_path) -> None:
     assert result.rejected == 2
     assert result.rejected_path.endswith("_rejected/demo/run_date=2026-11-09")
     assert spark.read.parquet(result.rejected_path).count() == 2
+
+
+@pytest.mark.spark
+def test_read_silver_keeps_department_codes_as_strings(spark, tmp_path) -> None:
+    from railfall.spark.write import read_silver
+
+    rows = [("01", 2025, 1.0), ("2A", 2025, 2.0), ("75", 2026, 3.0)]
+    df = spark.createDataFrame(rows, "department string, year int, precipitation_mm double")
+    path = f"{tmp_path}/silver/{w.WEATHER.name}"
+    df.write.partitionBy(*w.WEATHER.partition_by).parquet(path)
+
+    back = read_silver(spark, str(tmp_path), w.WEATHER)
+    types = dict(back.dtypes)
+    assert types["department"] == "string" and types["year"] == "int"
+    assert sorted(r.department for r in back.collect()) == ["01", "2A", "75"]
+    # The session setting is restored afterwards.
+    assert spark.conf.get("spark.sql.sources.partitionColumnTypeInference.enabled") == "true"
