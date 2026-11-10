@@ -146,10 +146,16 @@ jobs:
         run: |
           make --no-print-directory silver SILVER_ARGS="--report silver-1.json"
           cat silver-1.json
-          jq -e 'length == 3 and all(.[]; .ok)' silver-1.json
+          jq -e 'length == 6 and all(.[]; .ok)' silver-1.json
           jq -e '.[] | select(.table == "punctuality_monthly") | .rows >= 4000' silver-1.json
           jq -e '.[] | select(.table == "stations") | .rows >= 1500' silver-1.json
           jq -e '.[] | select(.table == "weather_daily") | .rows >= 3000' silver-1.json
+          # Derived tables: 3 departments x 12+ covered months; ~100+ TGV routes.
+          jq -e '.[] | select(.table == "weather_monthly") | .rows >= 36' silver-1.json
+          jq -e '.[] | select(.table == "route_departments") | .rows >= 100' silver-1.json
+          # The weather join keeps the punctuality grain: never loses or adds a row.
+          jq -e '(.[] | select(.table == "route_weather_monthly") | .rows)
+            == (.[] | select(.table == "punctuality_monthly") | .rows)' silver-1.json
           # Silver only cleans and de-duplicates: it never invents punctuality rows.
           jq -e --slurpfile ing ingest-1.json '
             (.[] | select(.table == "punctuality_monthly") | .rows + .rejected)
@@ -158,7 +164,7 @@ jobs:
       - name: Silver passes its contract (schema, unique keys)
         run: |
           make --no-print-directory verify-silver SILVER_ARGS="--report verify-silver-1.json"
-          jq -e 'length == 3 and all(.[]; .ok and .duplicate_keys == 0 and .null_keys == 0)' \
+          jq -e 'length == 6 and all(.[]; .ok and .duplicate_keys == 0 and .null_keys == 0)' \
             verify-silver-1.json
           jq -e --slurpfile job silver-1.json \
             '[.[] | {table, rows}] == [$job[0][] | {table, rows}]' verify-silver-1.json

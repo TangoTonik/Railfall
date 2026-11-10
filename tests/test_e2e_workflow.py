@@ -97,6 +97,15 @@ def test_silver_is_built_on_real_bronze_verified_and_rerun(steps):
     assert "--root" not in "".join(runs), "e2e reads the real lake, not a local directory"
 
 
+def test_e2e_covers_every_silver_table(steps):
+    from railfall.spark.write import TABLES
+
+    runs = "".join(s.get("run", "") for s in steps)
+    assert f"length == {len(TABLES)} and all(.[]; .ok)" in runs
+    for name in TABLES:
+        assert f'select(.table == "{name}")' in runs, name
+
+
 def test_spark_has_a_jvm_and_silver_survives_restart(steps):
     java = _step(steps, "actions/setup-java@")
     assert int(java["with"]["java-version"]) >= 17
