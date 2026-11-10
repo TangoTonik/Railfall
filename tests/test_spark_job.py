@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import calendar
+import gzip
 import shutil
 from datetime import date
 from pathlib import Path
@@ -9,7 +11,18 @@ from pathlib import Path
 import pytest
 
 from railfall.spark import job
-from railfall.spark.write import PUNCTUALITY, STATIONS, WEATHER
+from railfall.spark.write import (
+    BASE,
+    DERIVED,
+    PUNCTUALITY,
+    ROUTE_DEPARTMENTS,
+    ROUTE_WEATHER,
+    STATIONS,
+    TABLES,
+    WEATHER,
+    WEATHER_MONTHLY,
+    read_silver,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RUN = date(2026, 11, 9)
@@ -68,6 +81,39 @@ def _local_lake(root: Path, day: str = "2026-11-09") -> None:
         shutil.copy(src, dst)
 
 
+METEO_HEADER = (
+    "NUM_POSTE;NOM_USUEL;LAT;LON;ALTI;AAAAMMJJ;RR;QRR;TN;QTN;TX;QTX;TM;QTM;FFM;QFFM;FXY;QFXY"
+)
+
+
+def _full_months(root: Path, department: str, station: str, months: list[tuple[int, int]]) -> None:
+    """Bronze Météo-France file covering every day of `months` for one station.
+
+    The shared fixture only holds ten days of January 2025, too few for a
+    department-month; the derived tables need fully covered months that overlap
+    the punctuality fixture (January / February 2024).
+    """
+    lines = [METEO_HEADER]
+    for year, month in months:
+        for day in range(1, calendar.monthrange(year, month)[1] + 1):
+            rain = 12.0 if day % 7 == 0 else (2.0 if day % 3 == 0 else 0.0)
+            tmin = -1.5 if day % 5 == 0 else 3.0
+            lines.append(
+                f"{station};TEST;48.8;2.3;50;{year}{month:02d}{day:02d};"
+                f"{rain};1;{tmin};1;9.0;1;5.0;1;4.2;1;11.5;1"
+            )
+    key = f"bronze/meteo/daily_{department}_previous/ingest_date=2026-11-09/daily.csv.gz"
+    dst = root / key
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(gzip.compress(("\n".join(lines) + "\n").encode()))
+
+
+def _derived_lake(root: Path) -> None:
+    _local_lake(root)
+    _full_months(root, "75", "75114001", [(2024, 1), (2024, 2)])
+    _full_months(root, "13", "13055001", [(2024, 1)])
+
+
 def test_list_local_keys(tmp_path) -> None:
     _local_lake(tmp_path)
     keys = job.list_local_keys(str(tmp_path))
@@ -81,12 +127,12 @@ def test_full_run_is_idempotent(spark, tmp_path) -> None:
     root = str(tmp_path)
     keys = job.list_local_keys(root)
 
-    first = job.run(spark, root=root, keys=keys, run_date=RUN)
+    first = job.run(spark, root=root, keys=keys, names=[t.name for t in BASE], run_date=RUN)
     assert all(r.ok for r in first), [r.error for r in first]
     assert {r.table for r in first} == {"punctuality_monthly", "weather_daily", "stations"}
     assert all(r.rows > 0 for r in first)
 
-    second = job.run(spark, root=root, keys=keys, run_date=RUN)
+    second = job.run(spark, root=root, keys=keys, names=[t.name for t in BASE], run_date=RUN)
     assert [(r.table, r.rows) for r in second] == [(r.table, r.rows) for r in first]
     for r in second:
         assert spark.read.parquet(r.path).count() == r.rows
@@ -104,3 +150,84 @@ def test_missing_input_fails_only_its_table(spark, tmp_path) -> None:
     assert not results["weather_daily"].ok
     assert "MissingBronze" in results["weather_daily"].error
     assert results[STATIONS.name].ok and results[PUNCTUALITY.name].ok
+    # Tables built on the failed one fail with the cause instead of reading stale silver;
+    # the route mapping does not need weather and still builds.
+    assert "UpstreamFailed" in results[WEATHER_MONTHLY.name].error
+    assert "UpstreamFailed" in results[ROUTE_WEATHER.name].error
+    assert results[ROUTE_DEPARTMENTS.name].ok
+
+
+def test_tables_are_listed_in_dependency_order() -> None:
+    order = list(TABLES.values())
+    for table, inputs in job.DEPENDS_ON.items():
+        assert all(order.index(i) < order.index(table) for i in inputs), table.name
+    assert set(job.DEPENDS_ON) == set(DERIVED) == set(job.BUILDERS)
+
+
+def test_derived_tables_run_after_their_inputs_whatever_the_selection_order(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def fake_base(spark, table, **_):
+        calls.append(table.name)
+        return job.TableResult(table=table.name, ok=True)
+
+    def fake_derived(spark, table, **_):
+        calls.append(table.name)
+        return job.TableResult(table=table.name, ok=True)
+
+    monkeypatch.setattr(job, "run_table", fake_base)
+    monkeypatch.setattr(job, "run_derived", fake_derived)
+    job.run(None, root="/x", keys=[], names=[ROUTE_WEATHER.name, STATIONS.name], run_date=RUN)
+    assert calls == [STATIONS.name, ROUTE_WEATHER.name]
+
+
+@pytest.mark.spark
+def test_derived_tables_from_a_full_lake(spark, tmp_path) -> None:
+    _derived_lake(tmp_path)
+    root = str(tmp_path)
+    results = {
+        r.table: r for r in job.run(spark, root=root, keys=job.list_local_keys(root), run_date=RUN)
+    }
+    assert all(r.ok for r in results.values()), {t: r.error for t, r in results.items()}
+    assert results[ROUTE_WEATHER.name].source == (
+        "silver/punctuality_monthly, silver/route_departments, silver/weather_monthly"
+    )
+
+    monthly = read_silver(spark, root, WEATHER_MONTHLY)
+    assert {(r.department, r.month) for r in monthly.collect()} == {
+        ("75", date(2024, 1, 1)),
+        ("75", date(2024, 2, 1)),
+        ("13", date(2024, 1, 1)),
+    }
+
+    rows = read_silver(spark, root, ROUTE_WEATHER).collect()
+    # Same grain as punctuality: every route-month kept exactly once.
+    assert len(rows) == results[PUNCTUALITY.name].rows
+    by_route = {(r.route_id, r.month): r for r in rows}
+    paris_marseille = next(
+        r
+        for (route, month), r in by_route.items()
+        if month == date(2024, 1, 1) and "MARSEILLE" in r.arrival_station
+    )
+    assert paris_marseille.weather_endpoints == 2
+    assert paris_marseille.dep_frost_days > 0
+    # Paris -> Genève, February: one French endpoint with weather, one foreign.
+    geneve = next(r for r in by_route.values() if r.arrival_station == "GENEVE")
+    assert not geneve.is_domestic and geneve.weather_endpoints == 1
+
+    # Re-running rewrites the derived tables instead of appending to them.
+    again = {
+        r.table: r.rows
+        for r in job.run(
+            spark,
+            root=root,
+            keys=job.list_local_keys(root),
+            names=[d.name for d in DERIVED],
+            run_date=RUN,
+        )
+    }
+    assert again == {d.name: results[d.name].rows for d in DERIVED}
+    # Read fresh: a frame planned before the re-run points at replaced files.
+    assert read_silver(spark, root, ROUTE_WEATHER).count() == len(rows)

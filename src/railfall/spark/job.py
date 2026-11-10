@@ -13,6 +13,11 @@ Which bronze feeds which table:
   current and previous year), so every bronze day is read and the weather
   transform keeps one row per station-day, preferring the newest file.
 
+Derived tables (`weather_monthly`, `route_departments`, `route_weather_monthly`)
+are built afterwards from silver itself, read back with typed partitions. Tables
+run in dependency order; when an input failed in the same run, the tables built
+on it are reported as failed instead of being rebuilt from a stale copy.
+
 Each table is handled on its own: a missing bronze input or a failing transform
 is reported and makes the command exit non-zero, without stopping the others.
 Writes are partition overwrites (see `railfall.spark.write`), so re-running the
@@ -32,17 +37,57 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from railfall.config import Settings
-from railfall.spark import punctuality, stations, weather
-from railfall.spark.write import PUNCTUALITY, STATIONS, TABLES, WEATHER, Table, write_silver
+from railfall.spark import (
+    punctuality,
+    route_departments,
+    route_weather,
+    stations,
+    weather,
+    weather_monthly,
+)
+from railfall.spark.write import (
+    PUNCTUALITY,
+    ROUTE_DEPARTMENTS,
+    ROUTE_WEATHER,
+    STATIONS,
+    TABLES,
+    WEATHER,
+    WEATHER_MONTHLY,
+    Table,
+    read_silver,
+    write_silver,
+)
 
 if TYPE_CHECKING:
-    from pyspark.sql import SparkSession
+    from pyspark.sql import DataFrame, SparkSession
 
 _PARTITION = re.compile(r"/ingest_date=(\d{4}-\d{2}-\d{2})/")
 
 
 class MissingBronze(LookupError):
     """No bronze object exists yet for a silver table's input."""
+
+
+class EmptyTable(RuntimeError):
+    """A derived table came out empty: its inputs do not overlap."""
+
+
+class UpstreamFailed(RuntimeError):
+    """A silver table this derived table reads failed earlier in the same run."""
+
+
+# Silver inputs of each derived table, in the order its builder takes them.
+DEPENDS_ON: dict[Table, tuple[Table, ...]] = {
+    WEATHER_MONTHLY: (WEATHER,),
+    ROUTE_DEPARTMENTS: (PUNCTUALITY, STATIONS),
+    ROUTE_WEATHER: (PUNCTUALITY, ROUTE_DEPARTMENTS, WEATHER_MONTHLY),
+}
+
+BUILDERS: dict[Table, Callable[..., DataFrame]] = {
+    WEATHER_MONTHLY: weather_monthly.department_months,
+    ROUTE_DEPARTMENTS: route_departments.route_departments,
+    ROUTE_WEATHER: route_weather.route_weather,
+}
 
 
 @dataclass(frozen=True)
@@ -109,6 +154,31 @@ def bronze_input(table: Table, keys: Sequence[str], root: str) -> str:
     return f"{root}/{latest_snapshot(keys, 'sncf', dataset)}"
 
 
+def run_derived(
+    spark: SparkSession, table: Table, *, root: str, run_date: date, failed: Iterable[str] = ()
+) -> TableResult:
+    """Build a derived table from the silver tables it depends on."""
+    inputs = DEPENDS_ON[table]
+    source = ", ".join(f"silver/{t.name}" for t in inputs)
+    try:
+        broken = [t.name for t in inputs if t.name in set(failed)]
+        if broken:
+            raise UpstreamFailed(f"input(s) failed in this run: {', '.join(broken)}")
+        frames = [read_silver(spark, root, t) for t in inputs]
+        written = write_silver(
+            BUILDERS[table](*frames), None, root=root, table=table, run_date=run_date
+        )
+        if written.rows == 0:
+            # Spark writes no Parquet file for an empty partitioned frame, so the
+            # table would be unreadable downstream; fail here with the real cause.
+            raise EmptyTable(f"{table.name} has no rows (inputs: {source})")
+    except Exception as exc:  # one table failing must not hide the others
+        return TableResult(table=table.name, ok=False, error=f"{type(exc).__name__}: {exc}")
+    return TableResult(
+        table=table.name, ok=True, rows=written.rows, source=source, path=written.path
+    )
+
+
 def run_table(
     spark: SparkSession, table: Table, *, root: str, keys: Sequence[str], run_date: date
 ) -> TableResult:
@@ -144,9 +214,19 @@ def run(
     if unknown:
         raise ValueError(f"unknown silver table(s): {', '.join(unknown)}")
     run_date = run_date or datetime.now(UTC).date()
-    return [
-        run_table(spark, TABLES[name], root=root, keys=keys, run_date=run_date) for name in selected
-    ]
+    results: list[TableResult] = []
+    failed: set[str] = set()
+    for name, table in TABLES.items():  # dependency order, whatever the selection order
+        if name not in selected:
+            continue
+        if table in DEPENDS_ON:
+            result = run_derived(spark, table, root=root, run_date=run_date, failed=failed)
+        else:
+            result = run_table(spark, table, root=root, keys=keys, run_date=run_date)
+        if not result.ok:
+            failed.add(name)
+        results.append(result)
+    return results
 
 
 def _format(result: TableResult) -> str:
