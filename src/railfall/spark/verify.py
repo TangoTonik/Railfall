@@ -13,6 +13,11 @@ For each table the check is independent of the job that wrote it:
   duplicate rows),
 * the table is not empty.
 
+Tables whose contract names `profile` columns also report the row count per
+value of each, e.g. how many route-months got weather on 0, 1 or 2 endpoints.
+A join can keep its grain and still match nothing; the profile makes that
+visible, and e2e asserts on it.
+
 Exit code 0 only when every selected table passes.
 """
 
@@ -49,6 +54,8 @@ if TYPE_CHECKING:
 class Contract:
     key: tuple[str, ...]
     columns: Mapping[str, str]  # column -> Spark simpleString type
+    # Columns whose value distribution is reported (low-cardinality only).
+    profile: tuple[str, ...] = ()
 
 
 CONTRACTS: dict[str, Contract] = {
@@ -126,6 +133,7 @@ CONTRACTS: dict[str, Contract] = {
             "arrival_match": "string",
             "is_domestic": "boolean",
         },
+        profile=("departure_match", "arrival_match"),
     ),
     ROUTE_WEATHER.name: Contract(
         key=route_weather.KEY,
@@ -147,6 +155,7 @@ CONTRACTS: dict[str, Contract] = {
                 for m in route_weather.WEATHER_MEASURES
             },
         },
+        profile=("weather_endpoints",),
     ),
 }
 
@@ -161,6 +170,8 @@ class SilverReport:
     schema_errors: list[str] = field(default_factory=list)
     path: str = ""
     error: str = ""
+    # column -> {value as string: rows}; null values are reported under "null".
+    profile: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def schema_errors(actual: Mapping[str, str], expected: Mapping[str, str]) -> list[str]:
@@ -172,6 +183,16 @@ def schema_errors(actual: Mapping[str, str], expected: Mapping[str, str]) -> lis
         elif actual[column] != kind:
             errors.append(f"{column}: expected {kind}, got {actual[column]}")
     return errors
+
+
+def value_counts(df: DataFrame, columns: Iterable[str]) -> dict[str, dict[str, int]]:
+    """Row count per value of each column, keys stringified and sorted (JSON-friendly)."""
+    out: dict[str, dict[str, int]] = {}
+    for column in columns:
+        rows = df.groupBy(column).count().collect()
+        counts = {"null" if r[0] is None else str(r[0]).lower(): int(r[1]) for r in rows}
+        out[column] = dict(sorted(counts.items()))
+    return out
 
 
 def check_frame(df: DataFrame, table: Table, path: str = "") -> SilverReport:
@@ -205,6 +226,7 @@ def check_frame(df: DataFrame, table: Table, path: str = "") -> SilverReport:
         null_keys=null_keys,
         path=path,
         error="" if rows else "table is empty",
+        profile=value_counts(df, contract.profile) if rows else {},
     )
 
 
@@ -226,7 +248,11 @@ def verify(
 
 def _format(r: SilverReport) -> str:
     if r.ok:
-        return f"[  ok] {r.table:<20} {r.rows:>8} rows, key unique -> {r.path}"
+        line = f"[  ok] {r.table:<20} {r.rows:>8} rows, key unique -> {r.path}"
+        for column, counts in r.profile.items():
+            values = ", ".join(f"{v}={n}" for v, n in counts.items())
+            line += f"\n       {'':<20} {column}: {values}"
+        return line
     detail = r.error or "; ".join(r.schema_errors)
     if not detail:
         detail = f"{r.duplicate_keys} duplicate keys, {r.null_keys} null keys"
