@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import shutil
 from datetime import date
-from pathlib import Path
 
 import pytest
+from lakes import derived_lake
+from lakes import local_lake as _lake
 
 from railfall.spark import job, verify
 from railfall.spark.write import PUNCTUALITY, STATIONS, TABLES
-
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_every_table_has_a_contract_covering_key_and_partitions() -> None:
@@ -31,26 +29,9 @@ def test_schema_errors_reports_missing_and_mistyped_columns() -> None:
     assert verify.schema_errors(expected, expected) == []
 
 
-def _lake(root: Path) -> None:
-    day = "2026-11-09"
-    files = {
-        f"bronze/sncf/punctuality/ingest_date={day}/punctuality.json": (
-            "sncf/punctuality_sample.json"
-        ),
-        f"bronze/sncf/stations/ingest_date={day}/stations.json": "sncf/stations_sample.json",
-        f"bronze/meteo/daily_75_latest/ingest_date={day}/daily_75_latest.csv.gz": (
-            "meteo/Q_75_latest-2025-2026_RR-T-Vent.csv.gz"
-        ),
-    }
-    for key, src in files.items():
-        dst = root / key
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(FIXTURES / src, dst)
-
-
 @pytest.mark.spark
 def test_job_output_passes_its_contract(spark, tmp_path) -> None:
-    _lake(tmp_path)
+    derived_lake(tmp_path)
     root = str(tmp_path)
     written = job.run(spark, root=root, keys=job.list_local_keys(root), run_date=date(2026, 11, 9))
     reports = verify.verify(spark, root=root)

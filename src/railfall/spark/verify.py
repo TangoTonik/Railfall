@@ -27,12 +27,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from railfall.config import Settings
-from railfall.spark import punctuality, weather
+from railfall.spark import punctuality, route_weather, weather, weather_monthly
 from railfall.spark.write import (
     PUNCTUALITY,
+    ROUTE_DEPARTMENTS,
+    ROUTE_WEATHER,
     STATIONS,
     TABLES,
     WEATHER,
+    WEATHER_MONTHLY,
     Table,
     read_silver,
     silver_path,
@@ -91,6 +94,58 @@ CONTRACTS: dict[str, Contract] = {
             "department": "string",
             "latitude": "double",
             "longitude": "double",
+        },
+    ),
+    WEATHER_MONTHLY.name: Contract(
+        key=weather_monthly.KEY,
+        columns={
+            "department": "string",
+            "month": "date",
+            "year": "int",
+            "stations": "bigint",
+            "precipitation_mm": "double",
+            "rain_days": "double",
+            "heavy_rain_days": "double",
+            "temp_mean_c": "double",
+            "temp_min_c": "double",
+            "frost_days": "double",
+            "wind_mean_ms": "double",
+            "wind_max_ms": "double",
+            "strong_wind_days": "double",
+        },
+    ),
+    ROUTE_DEPARTMENTS.name: Contract(
+        key=("route_id",),
+        columns={
+            "route_id": "string",
+            "departure_station": "string",
+            "arrival_station": "string",
+            "departure_department": "string",
+            "arrival_department": "string",
+            "departure_match": "string",
+            "arrival_match": "string",
+            "is_domestic": "boolean",
+        },
+    ),
+    ROUTE_WEATHER.name: Contract(
+        key=route_weather.KEY,
+        columns={
+            "month": "date",
+            "year": "int",
+            "service": "string",
+            "route_id": "string",
+            "trains_run": "bigint",
+            "arrival_punctuality_rate": "double",
+            "departure_department": "string",
+            "arrival_department": "string",
+            "is_domestic": "boolean",
+            "weather_endpoints": "int",
+            **{f"route_{m}": "double" for m in route_weather.WEATHER_MEASURES},
+            **{
+                f"{side}_{m}": "double"
+                for side in route_weather.ENDPOINTS
+                for m in route_weather.WEATHER_MEASURES
+            },
         },
     ),
 }
