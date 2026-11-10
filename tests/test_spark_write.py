@@ -28,7 +28,15 @@ def test_paths() -> None:
         w.rejected_path("s3a://lake", w.STATIONS, RUN)
         == "s3a://lake/silver/_rejected/stations/run_date=2026-11-09"
     )
-    assert set(w.TABLES) == {"punctuality_monthly", "weather_daily", "stations"}
+    assert set(w.TABLES) == {
+        "punctuality_monthly",
+        "weather_daily",
+        "stations",
+        "weather_monthly",
+        "route_departments",
+        "route_weather_monthly",
+    }
+    assert list(w.TABLES.values()) == [*w.BASE, *w.DERIVED]
 
 
 def test_write_is_partitioned_and_idempotent(spark, tmp_path) -> None:
