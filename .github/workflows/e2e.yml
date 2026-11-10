@@ -168,6 +168,13 @@ jobs:
             verify-silver-1.json
           jq -e --slurpfile job silver-1.json \
             '[.[] | {table, rows}] == [$job[0][] | {table, rows}]' verify-silver-1.json
+          # The join must match, not just keep its grain: with weather for Paris,
+          # Lyon and Marseille, the routes between them carry weather at both ends.
+          jq '.[] | select(.profile != {}) | {table, profile}' verify-silver-1.json
+          jq -e '.[] | select(.table == "route_weather_monthly") | .profile.weather_endpoints
+            | (.["2"] // 0) >= 12 and ((.["1"] // 0) + (.["2"] // 0)) >= 24' verify-silver-1.json
+          jq -e '.[] | select(.table == "route_weather_monthly")
+            | ([.profile.weather_endpoints[]] | add) == .rows' verify-silver-1.json
 
       - name: Re-running silver does not duplicate rows
         # Partition overwrite: same bronze in, same row counts out, keys still unique.

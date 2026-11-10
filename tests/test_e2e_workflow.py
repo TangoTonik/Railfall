@@ -112,3 +112,11 @@ def test_spark_has_a_jvm_and_silver_survives_restart(steps):
     assert any("[spark]" in s.get("run", "") for s in steps)
     restart = _index(steps, "docker compose down\n")
     assert any("verify-silver" in s.get("run", "") for s in steps[restart:])
+
+
+def test_weather_join_coverage_is_asserted_on_the_real_lake(steps):
+    # Equal row counts alone would pass with every weather column null.
+    verify = steps[_index(steps, "verify-silver-1.json")]["run"]
+    checks = [line for line in verify.splitlines() if line.strip().startswith("jq -e")]
+    assert any("route_weather_monthly" in c for c in checks)
+    assert ".profile.weather_endpoints" in verify
