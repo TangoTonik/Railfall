@@ -99,6 +99,9 @@ the long history for a backfill.
 s3://railfall-lake/silver/punctuality_monthly/year=YYYY/part-*.parquet
 s3://railfall-lake/silver/weather_daily/department=DD/year=YYYY/part-*.parquet
 s3://railfall-lake/silver/stations/part-*.parquet
+s3://railfall-lake/silver/weather_monthly/year=YYYY/part-*.parquet
+s3://railfall-lake/silver/route_departments/part-*.parquet
+s3://railfall-lake/silver/route_weather_monthly/year=YYYY/part-*.parquet
 s3://railfall-lake/silver/_rejected/<table>/run_date=YYYY-MM-DD/part-*.parquet
 ```
 
@@ -107,11 +110,20 @@ s3://railfall-lake/silver/_rejected/<table>/run_date=YYYY-MM-DD/part-*.parquet
 | `punctuality_monthly` | month, service, departure, arrival | typed counts, `route_id`, `trains_run`, arrival punctuality rate |
 | `weather_daily` | station_id, day | rain, min/max/mean temperature, wind; doubtful or impossible values nulled |
 | `stations` | uic_code | name, accent-free `name_key`, department, coordinates |
+| `weather_monthly` | department, month | rain total, rain / heavy-rain / frost / strong-wind days, mean temperature and wind, stations per measure |
+| `route_departments` | route_id | department of each endpoint and how it was resolved (`alias`, `foreign`, `exact`, `prefix`, `unmatched`) |
+| `route_weather_monthly` | month, service, route_id | punctuality joined with weather at both ends (`dep_*`, `arr_*`, `route_*`), `weather_endpoints` 0–2 |
 
 SNCF tables are rebuilt from the newest bronze snapshot; weather reads every
 bronze day and keeps the newest row per station-day. Writes overwrite
 partitions, so re-running never appends. Rows with an untrustworthy key go to
 `_rejected/` with a `reject_reason` instead of being dropped silently.
+
+The three derived tables are built in the same job from silver itself, after
+their inputs. `route_weather_monthly` keeps exactly the rows of
+`punctuality_monthly` (left joins on unique keys); routes without weather keep
+null measures and `weather_endpoints = 0` rather than disappearing.
+`verify-silver` reports how many route-months got weather on 0, 1 or 2 ends.
 
 ## How this project is built
 

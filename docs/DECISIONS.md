@@ -230,3 +230,47 @@ with keys still unique, and that silver survives a stack restart.
 stdout, so Ivy/Spark output could interleave with a printed JSON summary; e2e
 reads the report file instead of parsing stdout.
 
+
+## Day 7 — Monthly weather, route ↔ department mapping, joined silver table
+
+**Meet punctuality at its grain: department-month.** SNCF publishes TGV
+punctuality per route and month, so daily weather is rolled up to
+`weather_monthly` in two steps. Each station's month is summarised first, with
+day counts scaled to the month from the days it reported and the measure
+dropped below 80 % coverage (scaling a half-empty month only amplifies noise,
+and the month still in progress falls out by itself). Covered station-months
+are then averaged per department, keeping how many stations each measure rests
+on, so a department-month built on one rain gauge does not look as solid as
+Paris. Thresholds follow Météo-France conventions (rain day ≥ 1 mm, heavy rain
+≥ 10 mm, frost TN < 0 °C); strong wind is FXY ≥ 10.8 m/s (Beaufort 6) because
+gusts are not in the files silver keeps.
+
+**Route mapping by deterministic rules, never by fuzzy matching.** AQST names
+(`MARSEILLE ST CHARLES`) and SNCF names (`Marseille Saint-Charles`) are folded
+to a common key and resolved in order: a small curated alias table, a list of
+foreign stations (no department on purpose), exact key, then prefix — accepted
+only if every candidate station lies in the same department. Fuzzy string
+similarity was rejected: a wrong department would silently attach the wrong
+weather, which is worse than a null. Every endpoint records its
+`match_method`, and `unmatched` ones stay in the table so coverage is
+measurable.
+
+**The join cannot change the punctuality row count.** `route_weather_monthly`
+uses only left joins on keys unique on the right (`route_id`,
+`(department, month)`), so it has exactly the grain and rows of
+`punctuality_monthly`. Weather is kept per endpoint (`dep_*`, `arr_*`) plus a
+route-level `route_*` value: mean of the covered ends, max/min for extremes. The
+two ends are a proxy for the line, not a measurement of it; keeping both lets
+the dbt models choose a different combination later.
+
+**Derived tables are built from silver, not from bronze.** They run in the same
+Spark job after their inputs, reading silver back with typed partitions. They
+reuse the cleaned, de-duplicated data and its contracts instead of repeating the
+bronze logic, and partition overwrite keeps the re-run idempotent.
+
+**Prove the join matches, not just that it keeps its grain.** Equal row counts
+would also pass with every weather column null, so `verify-silver` profiles
+`weather_endpoints` and e2e asserts on the real lake that at least 12
+route-months have weather at both ends and 24 at one or more (Paris, Lyon and
+Marseille are ingested), that the profile sums to the row count, and that a
+second run gives identical counts with unique keys.
