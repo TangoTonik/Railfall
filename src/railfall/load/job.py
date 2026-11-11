@@ -21,6 +21,9 @@ Scope of a load:
 Every table is merged in its own transaction (`railfall.load.postgres.merge_rows`),
 so a failing table rolls back alone and is reported; the command exits non-zero
 if any table failed. Re-running the job with the same silver changes nothing.
+
+Every run is then appended to `raw._load_runs` (`railfall.load.audit`), failed
+tables included, under one `run_id` that every result in the JSON summary carries.
 """
 
 from __future__ import annotations
@@ -28,12 +31,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from railfall.config import Settings
+from railfall.load import audit
 from railfall.load.postgres import merge_rows
 from railfall.load.schema import TargetTable, target_table
 from railfall.spark.verify import CONTRACTS
@@ -58,6 +65,8 @@ class LoadResult:
     unchanged: int = 0
     deleted: int = 0
     error: str = ""
+    seconds: float = 0.0
+    run_id: str = ""
 
 
 def target_for(
@@ -149,6 +158,35 @@ def load_table(
     )
 
 
+def _timed_load(spark, conn, table, **kwargs) -> tuple[LoadResult, datetime, datetime]:
+    started = datetime.now(UTC)
+    clock = time.monotonic()
+    result = load_table(spark, conn, table, **kwargs)
+    elapsed = round(time.monotonic() - clock, 3)
+    finished = datetime.now(UTC)
+    return LoadResult(**(asdict(result) | {"seconds": elapsed})), started, finished
+
+
+def log_entry(
+    run_id: uuid.UUID, result: LoadResult, started: datetime, finished: datetime
+) -> audit.LogEntry:
+    return audit.LogEntry(
+        run_id=run_id,
+        table_name=result.table,
+        target=result.target,
+        scope=result.scope,
+        ok=result.ok,
+        staged=result.staged,
+        inserted=result.inserted,
+        updated=result.updated,
+        unchanged=result.unchanged,
+        deleted=result.deleted,
+        error=result.error or None,
+        started_at=started,
+        finished_at=finished,
+    )
+
+
 def run(
     spark: SparkSession,
     conn: psycopg.Connection,
@@ -157,17 +195,21 @@ def run(
     names: Iterable[str] | None = None,
     years: Sequence[int] | None = None,
     schema: str = "raw",
+    run_id: uuid.UUID | None = None,
 ) -> list[LoadResult]:
-    """Load the selected tables (default: all) in silver dependency order."""
+    """Load the selected tables (default: all) in silver dependency order, then log the run."""
     selected = set(names) if names else set(TABLES)
     unknown = sorted(selected - set(TABLES))
     if unknown:
         raise ValueError(f"unknown silver tables: {unknown}")
-    return [
-        load_table(spark, conn, table, root=root, years=years, schema=schema)
+    run_id = run_id or audit.new_run_id()
+    timed = [
+        _timed_load(spark, conn, table, root=root, years=years, schema=schema)
         for name, table in TABLES.items()
         if name in selected
     ]
+    audit.record(conn, (log_entry(run_id, *t) for t in timed), schema=schema)
+    return [LoadResult(**(asdict(r) | {"run_id": str(run_id)})) for r, _, _ in timed]
 
 
 def _format(r: LoadResult) -> str:
@@ -175,7 +217,7 @@ def _format(r: LoadResult) -> str:
         return f"[FAIL] {r.table:<22} {r.error}"
     return (
         f"[  ok] {r.target:<26} {r.scope:<12} {r.staged:>8} staged: "
-        f"+{r.inserted} ~{r.updated} ={r.unchanged} -{r.deleted}"
+        f"+{r.inserted} ~{r.updated} ={r.unchanged} -{r.deleted} ({r.seconds:.1f}s)"
     )
 
 
@@ -209,10 +251,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         root = lake_uri(settings).rstrip("/")
         spark = build_session(settings, app_name="railfall-load")
+    run_id = audit.new_run_id()
     try:
         # Autocommit: each table opens (and commits or rolls back) its own transaction.
         with psycopg.connect(settings.warehouse_dsn, autocommit=True) as conn:
-            results = run(spark, conn, root=root, names=args.table, years=args.year)
+            results = run(spark, conn, root=root, names=args.table, years=args.year, run_id=run_id)
     finally:
         spark.stop()
 
@@ -222,6 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         print(payload)
     else:
+        print(f"load run {run_id}")
         for r in results:
             print(_format(r))
     return 0 if all(r.ok for r in results) else 1

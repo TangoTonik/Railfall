@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from uuid import UUID
 
 import pytest
 
@@ -141,3 +142,26 @@ def test_missing_silver_table_fails_alone(spark, tmp_path, warehouse):
     assert [r.table for r in results] == ["punctuality_monthly", "stations"]
     assert by_table["punctuality_monthly"].ok
     assert not by_table["stations"].ok and by_table["stations"].error
+
+
+@pytest.mark.spark
+def test_every_run_is_logged_including_failed_tables(spark, tmp_path, warehouse):
+    from railfall.load import audit
+
+    conn, schema = warehouse
+    root = str(tmp_path)
+    _write(spark, root, w.PUNCTUALITY, _punctuality(spark, PUNCT))
+
+    job.run(spark, conn, root=root, names=["punctuality_monthly"], schema=schema)
+    second = job.run(
+        spark, conn, root=root, names=["stations", "punctuality_monthly"], schema=schema
+    )
+
+    logged = audit.last_run(conn, schema=schema)
+    assert {e.run_id for e in logged} == {UUID(second[0].run_id)}
+    by_table = {e.table_name: e for e in logged}
+    assert by_table["punctuality_monthly"].ok and by_table["punctuality_monthly"].unchanged == 3
+    assert not by_table["stations"].ok and by_table["stations"].error
+    assert all(e.finished_at >= e.started_at for e in logged)
+    (runs,) = conn.execute(f"select count(distinct run_id) from {schema}._load_runs").fetchone()
+    assert runs == 2
