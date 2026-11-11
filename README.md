@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 6 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 8 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -53,6 +53,8 @@ make ingest-meteo # download Météo-France daily files for METEO_DEPARTMENTS in
 make verify-meteo # re-check today's Météo-France bronze against manifests and contract
 make silver       # Spark: clean, type and de-duplicate bronze into silver Parquet
 make verify-silver # read silver back: schema contract, unique non-null keys, not empty
+make load         # merge silver into the warehouse raw schema (LOAD_ARGS="--year 2025" for one year)
+make verify-load  # check raw against silver: columns, primary key, no duplicates, row counts
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -125,6 +127,22 @@ their inputs. `route_weather_monthly` keeps exactly the rows of
 null measures and `weather_endpoints = 0` rather than disappearing.
 `verify-silver` reports how many route-months got weather on 0, 1 or 2 ends.
 
+### Warehouse `raw` layout
+
+Every silver table is loaded into `raw.<table>` by `railfall_loader`, with the
+same columns (DDL derived from the Parquet schema) and the silver business key
+as primary key, plus `_loaded_at` / `_updated_at`.
+
+Each table is merged in its own transaction: `COPY` into a temporary stage,
+`INSERT ... ON CONFLICT DO UPDATE` only where a value changed, then delete the
+rows of the replaced scope that silver no longer has. Re-running a load
+therefore changes nothing. `--year 2025` replaces only that year's partitions;
+the small reference tables (`stations`, `route_departments`) always load in full.
+
+Every run appends one row per table to `raw._load_runs` (run id, scope,
+staged / inserted / updated / unchanged / deleted rows, outcome, timings), so
+"what did the last load do?" has an answer even when it changed nothing.
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -134,7 +152,7 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 ## Project layout
 
 ```
-src/railfall/       Python package (config, ingestion, Spark silver jobs)
+src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load)
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
 infra/minio/        Source build of the pinned MinIO image
