@@ -126,7 +126,7 @@ def test_load_runs_on_real_silver_verified_and_rerun(steps):
     runs = [s.get("run", "") for s in steps]
     loads = [i for i, r in enumerate(runs) if "make --no-print-directory load " in r]
     checks = [i for i, r in enumerate(runs) if "verify-load" in r]
-    assert len(loads) == 2, "load twice to prove re-runs do not duplicate warehouse rows"
+    assert len(loads) >= 2, "load twice to prove re-runs do not duplicate warehouse rows"
     last_silver = max(i for i, r in enumerate(runs) if "make --no-print-directory silver " in r)
     assert last_silver < loads[0] < checks[0] < loads[1] <= checks[-1]
     # The second load must be a no-op, not merely "ok".
@@ -145,3 +145,14 @@ def test_provider_download_goes_through_the_retrying_init(steps):
     assert "make infra-init" in validate
     tf = [line for line in validate.splitlines() if line.strip().startswith("terraform ")]
     assert not any(" init" in line for line in tf), "no un-retried terraform init"
+
+
+def test_incremental_load_repairs_one_year_on_the_real_warehouse(steps):
+    i = _index(steps, 'LOAD_ARGS="--year $year')
+    run = steps[i]["run"]
+    # Drift is created in the real warehouse, then repaired by the scoped load.
+    assert run.index("delete from raw.punctuality_monthly") < run.index("--year $year")
+    assert '.scope == ("year=" + $y)' in run and '.scope == "full"' in run
+    assert "verify-load" in run
+    reruns = [j for j, s in enumerate(steps) if "load-2.json" in s.get("run", "")]
+    assert reruns and max(reruns) < i, "the full re-run is proven before the incremental one"

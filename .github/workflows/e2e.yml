@@ -229,6 +229,38 @@ jobs:
             '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
              and all(.[]; .ok and .duplicate_keys == 0)' verify-load-2.json
 
+      - name: Incremental load of the latest year repairs only that year
+        # Simulate drift as the admin: drop the latest year of punctuality from
+        # the warehouse. `--year` must restore exactly those rows, leave every
+        # other year untouched, and still reload the small reference tables in full.
+        run: |
+          year=$(jq -r '.[] | select(.table == "punctuality_monthly") | .by_year | keys
+            | map(tonumber) | max' verify-load-1.json)
+          echo "latest year: $year"
+          docker compose exec -T postgres psql -U rail -d warehouse -v ON_ERROR_STOP=1 \
+            -c "delete from raw.punctuality_monthly where year = $year"
+          make --no-print-directory load LOAD_ARGS="--year $year --report load-3.json"
+          cat load-3.json
+          jq -e 'length == 6 and all(.[]; .ok and .updated == 0 and .deleted == 0)' load-3.json
+          # Year-partitioned tables are scoped to $year and stage exactly its rows;
+          # unpartitioned ones load in full.
+          jq -e --slurpfile v verify-load-1.json --arg y "$year" '
+            ($v[0] | map({(.table): .by_year}) | add) as $by
+            | all(.[]; if ($by[.table] | length) > 0
+                then .scope == ("year=" + $y) and .staged == ($by[.table][$y] // 0)
+                else .scope == "full" end)' load-3.json
+          # Only the dropped rows come back; everything else is a no-op.
+          jq -e --slurpfile v verify-load-1.json --arg y "$year" '
+            ($v[0][] | select(.table == "punctuality_monthly") | .by_year[$y]) as $n
+            | $n > 0
+              and (.[] | select(.table == "punctuality_monthly") | .inserted == $n)
+              and ([.[] | select(.table != "punctuality_monthly") | .inserted] | add == 0)
+            ' load-3.json
+          make --no-print-directory verify-load LOAD_ARGS="--report verify-load-3.json"
+          jq -e --slurpfile one verify-load-1.json \
+            '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
+             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-3.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
