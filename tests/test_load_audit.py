@@ -47,6 +47,24 @@ def test_entry_row_follows_column_order():
     assert row[0] == run and row[1] == "stations" and row[-1] == T0 + timedelta(seconds=2)
 
 
+class _RecordingConn:
+    """Captures the statements `record` issues, without a database."""
+
+    def __init__(self):
+        self.statements: list[str] = []
+
+    def execute(self, query, *args):
+        self.statements.append(query.as_string(None))
+
+
+def test_record_never_creates_the_schema():
+    # The loader role has no CREATE on the database; the schema comes from Terraform.
+    fake = _RecordingConn()
+    assert audit.record(fake, [], schema="raw") == 0
+    assert not any("create schema" in s for s in fake.statements)
+    assert fake.statements == [audit.create_log_sql("raw").as_string(None)]
+
+
 # --------------------------------------------------------------------------- real Postgres
 
 

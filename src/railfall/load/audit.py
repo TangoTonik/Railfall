@@ -93,7 +93,9 @@ def insert_log_sql(schema: str = "raw") -> sql.Composed:
 def record(conn: psycopg.Connection, entries: Iterable[LogEntry], *, schema: str = "raw") -> int:
     """Append `entries` to the log (creating it if needed); returns how many were new."""
     rows = [e.as_row() for e in entries]
-    conn.execute(sql.SQL("create schema if not exists {}").format(sql.Identifier(schema)))
+    # The schema itself is provisioned by Terraform. Don't `create schema if not
+    # exists` here: Postgres checks CREATE on the database before the existence
+    # check, and the loader role deliberately doesn't have it.
     conn.execute(create_log_sql(schema))
     if not rows:
         return 0
