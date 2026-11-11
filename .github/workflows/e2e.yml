@@ -218,6 +218,10 @@ jobs:
           jq -e 'length == 6 and all(.[]; .ok)' load-2.json
           jq -e 'all(.[]; .inserted == 0 and .updated == 0 and .deleted == 0
             and .unchanged == .staged)' load-2.json
+          # Each run is logged under its own run_id, shared by all its tables.
+          jq -e --slurpfile one load-1.json \
+            '([.[].run_id] | unique | length == 1)
+             and .[0].run_id != $one[0][0].run_id and .[0].run_id != ""' load-2.json
           make --no-print-directory verify-load LOAD_ARGS="--report verify-load-2.json"
           jq -e --slurpfile one verify-load-1.json \
             '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
