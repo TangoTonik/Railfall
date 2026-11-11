@@ -45,17 +45,16 @@ def test_help_lists_documented_targets():
 
 
 def test_up_builds_then_waits_then_provisions_with_terraform():
-    lines = [
-        line
-        for line in _make("-n", "up").splitlines()
-        if line.startswith(("docker compose", "terraform"))
-    ]
-    assert lines == [
+    out = _make("-n", "up")
+    order = [
         "docker compose build minio",
         "docker compose up -d --wait postgres minio",
         "terraform -chdir=infra/terraform init -input=false",
         "terraform -chdir=infra/terraform apply -input=false -auto-approve",
     ]
+    positions = [out.find(cmd) for cmd in order]
+    assert -1 not in positions, positions
+    assert positions == sorted(positions)
 
 
 def test_infra_check_fails_on_drift():
@@ -113,3 +112,9 @@ def test_load_runs_the_warehouse_loader_with_extra_args():
 def test_verify_load_runs_the_warehouse_check():
     out = _make("-n", "verify-load", "PYTHON=python", "LOAD_ARGS=--report v.json")
     assert "python -m railfall.load.verify --report v.json" in out
+
+
+def test_terraform_init_is_retried():
+    out = _make("-n", "infra-init")
+    assert out.count("terraform -chdir=") == 1
+    assert "for i in 1 2 3" in out and "sleep" in out

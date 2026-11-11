@@ -138,3 +138,10 @@ def test_load_runs_on_real_silver_verified_and_rerun(steps):
 def test_warehouse_is_verified_after_restart(steps):
     restart = _index(steps, "docker compose down\n")
     assert any("verify-load" in s.get("run", "") for s in steps[restart:])
+
+
+def test_provider_download_goes_through_the_retrying_init(steps):
+    validate = steps[_index(steps, "terraform -chdir=infra/terraform validate")]["run"]
+    assert "make infra-init" in validate
+    tf = [line for line in validate.splitlines() if line.strip().startswith("terraform ")]
+    assert not any(" init" in line for line in tf), "no un-retried terraform init"

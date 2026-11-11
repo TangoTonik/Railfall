@@ -41,7 +41,9 @@ jobs:
       - name: Terraform fmt + validate
         run: |
           terraform -chdir=infra/terraform fmt -check -recursive
-          terraform -chdir=infra/terraform init -input=false -backend=false
+          # Provider downloads hit the registry and GitHub releases; a 500 there
+          # (e2e run 39) is not a failure of ours, so init is retried.
+          make infra-init
           terraform -chdir=infra/terraform validate
 
       - name: Validate compose file

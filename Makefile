@@ -36,8 +36,12 @@ up: build ## Start Postgres + MinIO, wait until healthy, provision them with Ter
 	$(COMPOSE) up -d --wait postgres minio
 	$(MAKE) --no-print-directory infra
 
-infra-init: ## Download the pinned Terraform providers
-	$(TF) -chdir=$(TF_DIR) init -input=false
+infra-init: ## Download the pinned Terraform providers (retried: the registry is flaky)
+	@for i in 1 2 3; do \
+		$(TF) -chdir=$(TF_DIR) init -input=false && exit 0; \
+		echo "terraform init failed (attempt $$i/3), retrying in $$((i * 15))s" >&2; \
+		sleep $$((i * 15)); \
+	done; exit 1
 
 infra: infra-init ## Apply Terraform: lake bucket, pipeline user, warehouse schemas + roles
 	$(TF) -chdir=$(TF_DIR) apply -input=false -auto-approve
