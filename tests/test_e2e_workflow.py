@@ -120,3 +120,21 @@ def test_weather_join_coverage_is_asserted_on_the_real_lake(steps):
     checks = [line for line in verify.splitlines() if line.strip().startswith("jq -e")]
     assert any("route_weather_monthly" in c for c in checks)
     assert ".profile.weather_endpoints" in verify
+
+
+def test_load_runs_on_real_silver_verified_and_rerun(steps):
+    runs = [s.get("run", "") for s in steps]
+    loads = [i for i, r in enumerate(runs) if "make --no-print-directory load " in r]
+    checks = [i for i, r in enumerate(runs) if "verify-load" in r]
+    assert len(loads) == 2, "load twice to prove re-runs do not duplicate warehouse rows"
+    last_silver = max(i for i, r in enumerate(runs) if "make --no-print-directory silver " in r)
+    assert last_silver < loads[0] < checks[0] < loads[1] <= checks[-1]
+    # The second load must be a no-op, not merely "ok".
+    rerun = runs[loads[1]]
+    assert ".inserted == 0" in rerun and ".updated == 0" in rerun and ".deleted == 0" in rerun
+    assert 'LOAD_ARGS="--root' not in "".join(runs), "e2e loads from the real lake"
+
+
+def test_warehouse_is_verified_after_restart(steps):
+    restart = _index(steps, "docker compose down\n")
+    assert any("verify-load" in s.get("run", "") for s in steps[restart:])
