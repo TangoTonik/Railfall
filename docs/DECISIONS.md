@@ -274,3 +274,44 @@ would also pass with every weather column null, so `verify-silver` profiles
 route-months have weather at both ends and 24 at one or more (Paris, Lyon and
 Marseille are ingested), that the profile sums to the row count, and that a
 second run gives identical counts with unique keys.
+
+
+## Day 8 — Incremental, idempotent load silver → Postgres
+
+**Postgres mirrors silver, derived not hand-written.** The `raw` DDL is generated
+from each silver table's Spark schema with an explicit type map; an unknown Spark
+type is refused instead of widened. Only the primary key comes from the silver
+contract, because Parquet has no notion of one. New silver columns are added on
+the next load; a column whose type changed fails the load rather than being
+altered behind the transformer's back.
+
+**Merge, not truncate-and-insert.** Each table is loaded in one transaction:
+`COPY` into a temporary stage, `INSERT ... ON CONFLICT (key) DO UPDATE ... WHERE
+IS DISTINCT FROM`, then delete the rows of the replaced scope that the stage
+lacks. Truncate-and-insert was simpler but leaves the table empty to readers
+mid-load and makes `_updated_at` meaningless. With the merge, a re-run of the
+same silver inserts, updates and deletes nothing, and the primary key makes a
+duplicate impossible rather than merely unlikely.
+
+**Incremental by year partition.** `--year` filters the year-partitioned tables
+and replaces only those partitions, which is how a late correction from SNCF or
+Météo-France gets in without reloading history. Reference tables (`stations`,
+`route_departments`) always load in full, so a route-month never points at a
+route the warehouse lacks. Spark reads silver and the rows are streamed to
+Postgres with psycopg `COPY` from the driver: the data is a few hundred thousand
+rows, and a JDBC writer would add a driver jar without giving us `ON CONFLICT`.
+
+**An append-only audit log.** An idempotent re-run leaves no trace in the data,
+so every run appends one row per table to `raw._load_runs` (scope, counts,
+outcome, timings) in autocommit, so a table that rolled back is still recorded
+as failed. The loader role does not create the `raw` schema: Terraform owns it,
+and `create schema if not exists` needs CREATE on the database even when the
+schema exists (found by e2e run 38).
+
+**Proof on the real warehouse.** `verify-load` checks `raw` against silver
+independently of the loader: columns and types from the contract, primary key,
+no null or repeated key, and row counts per table and per year. e2e loads the
+real silver, verifies, loads again and asserts zero inserts/updates/deletes and
+an identical report, checks each run got its own `run_id`, then deletes the
+latest punctuality year and repairs it with `load --year`, which must re-insert
+exactly the dropped rows.
