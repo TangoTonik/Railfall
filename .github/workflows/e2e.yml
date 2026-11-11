@@ -187,6 +187,42 @@ jobs:
             '[.[] | {table, rows}] == [$one[0][] | {table, rows}] and all(.[]; .ok)' \
             verify-silver-2.json
 
+      - name: Load silver into the warehouse raw schema (Spark -> Postgres)
+        # Real silver over S3A, real Postgres as railfall_loader (WAREHOUSE_DSN
+        # from .env). Fresh warehouse: every staged row is an insert.
+        run: |
+          make --no-print-directory load LOAD_ARGS="--report load-1.json"
+          cat load-1.json
+          jq -e 'length == 6 and all(.[]; .ok and .scope == "full")' load-1.json
+          jq -e 'all(.[]; .staged > 0 and .inserted == .staged and .updated == 0 and .deleted == 0)' \
+            load-1.json
+          # The warehouse gets exactly what silver built, table by table.
+          jq -e --slurpfile silver silver-2.json \
+            '([.[] | {table, rows: .staged}] | sort_by(.table))
+             == ([$silver[0][] | {table, rows}] | sort_by(.table))' load-1.json
+
+      - name: Warehouse matches silver (columns, primary key, counts per year)
+        run: |
+          make --no-print-directory verify-load LOAD_ARGS="--report verify-load-1.json"
+          jq -e 'length == 6 and all(.[]; .ok and .duplicate_keys == 0 and .null_keys == 0)' \
+            verify-load-1.json
+          jq -e 'all(.[]; .rows == .silver_rows and (.primary_key | length) > 0)' verify-load-1.json
+          jq -e '.[] | select(.table == "punctuality_monthly") | .by_year | length >= 1' \
+            verify-load-1.json
+
+      - name: Re-running the load does not duplicate or rewrite rows
+        # Same silver in -> nothing inserted, updated or deleted; counts unchanged.
+        run: |
+          make --no-print-directory load LOAD_ARGS="--report load-2.json"
+          cat load-2.json
+          jq -e 'length == 6 and all(.[]; .ok)' load-2.json
+          jq -e 'all(.[]; .inserted == 0 and .updated == 0 and .deleted == 0
+            and .unchanged == .staged)' load-2.json
+          make --no-print-directory verify-load LOAD_ARGS="--report verify-load-2.json"
+          jq -e --slurpfile one verify-load-1.json \
+            '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
+             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-2.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -205,6 +241,7 @@ jobs:
           make --no-print-directory verify-sncf
           make --no-print-directory verify-meteo
           make --no-print-directory verify-silver
+          make --no-print-directory verify-load
 
       - name: Dump service logs
         if: failure()
