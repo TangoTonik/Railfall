@@ -19,7 +19,7 @@ TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver verify-silver load logs ps down \
+.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver verify-silver load verify-load logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -74,6 +74,9 @@ verify-silver: ## Read silver back and check schema, key uniqueness and non-empt
 
 load: ## Merge silver into the warehouse raw schema, idempotently (LOAD_ARGS=--year 2025 --json)
 	$(PYTHON) -m railfall.load.job $(LOAD_ARGS)
+
+verify-load: ## Check raw tables against silver: columns, primary key, no duplicates, counts
+	$(PYTHON) -m railfall.load.verify $(LOAD_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) logs -f

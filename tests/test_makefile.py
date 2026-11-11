@@ -108,3 +108,8 @@ def test_verify_silver_runs_the_contract_check():
 def test_load_runs_the_warehouse_loader_with_extra_args():
     out = _make("-n", "load", "PYTHON=python", "LOAD_ARGS=--year 2025 --json")
     assert "python -m railfall.load.job --year 2025 --json" in out
+
+
+def test_verify_load_runs_the_warehouse_check():
+    out = _make("-n", "verify-load", "PYTHON=python", "LOAD_ARGS=--report v.json")
+    assert "python -m railfall.load.verify --report v.json" in out
