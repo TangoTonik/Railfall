@@ -37,6 +37,7 @@ def test_help_lists_documented_targets():
         "ingest-meteo",
         "verify-meteo",
         "silver",
+        "load",
         "down",
     )
     for target in (*targets, "clean"):
@@ -102,3 +103,8 @@ def test_silver_runs_the_spark_job_with_extra_args():
 def test_verify_silver_runs_the_contract_check():
     out = _make("-n", "verify-silver", "PYTHON=python", "SILVER_ARGS=--json")
     assert "python -m railfall.spark.verify --json" in out
+
+
+def test_load_runs_the_warehouse_loader_with_extra_args():
+    out = _make("-n", "load", "PYTHON=python", "LOAD_ARGS=--year 2025 --json")
+    assert "python -m railfall.load.job --year 2025 --json" in out
