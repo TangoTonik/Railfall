@@ -26,16 +26,10 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg import sql
 
-from railfall.load.schema import LOADED_AT, UPDATED_AT, TargetTable
+from railfall.load.schema import LOADED_AT, UPDATED_AT, TargetTable, canonical_pg_type
 
 if TYPE_CHECKING:
     import psycopg
-
-# format_type() spelling of the types `schema.pg_type` emits under a short alias.
-_CANONICAL = {
-    "timestamptz": "timestamp with time zone",
-    "timestamp": "timestamp without time zone",
-}
 
 
 @dataclass(frozen=True)
@@ -104,7 +98,7 @@ def schema_drift(existing: dict[str, str], table: TargetTable) -> tuple[list[str
         if col.name not in existing:
             to_add.append(col.name)
             continue
-        want = _CANONICAL.get(col.pg_type, col.pg_type)
+        want = canonical_pg_type(col.pg_type)
         if existing[col.name] != want:
             conflicts.append(f"{col.name}: warehouse has {existing[col.name]}, silver has {want}")
     return to_add, conflicts

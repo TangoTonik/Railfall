@@ -1,6 +1,6 @@
 import pytest
 
-from railfall.load.schema import Column, TargetTable, pg_type, target_table
+from railfall.load.schema import Column, TargetTable, canonical_pg_type, pg_type, target_table
 
 
 @pytest.mark.parametrize(
@@ -63,3 +63,16 @@ def test_target_table_rejects_audit_and_duplicate_columns():
         TargetTable("raw", "t", (Column("a", "text"), Column("_loaded_at", "text")), ("a",))
     with pytest.raises(ValueError, match="duplicate"):
         TargetTable("raw", "t", (Column("a", "text"), Column("a", "text")), ("a",))
+
+
+@pytest.mark.parametrize(
+    ("pg", "canonical"),
+    [
+        ("timestamptz", "timestamp with time zone"),
+        ("timestamp", "timestamp without time zone"),
+        ("double precision", "double precision"),
+        ("numeric(10,2)", "numeric(10,2)"),
+    ],
+)
+def test_canonical_pg_type_matches_format_type(pg, canonical):
+    assert canonical_pg_type(pg) == canonical

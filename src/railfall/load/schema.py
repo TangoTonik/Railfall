@@ -30,6 +30,12 @@ SPARK_TO_PG: dict[str, str] = {
     "timestamp_ntz": "timestamp",
 }
 
+# format_type() spelling of the types `pg_type` emits under a short alias.
+_CANONICAL = {
+    "timestamptz": "timestamp with time zone",
+    "timestamp": "timestamp without time zone",
+}
+
 _DECIMAL = re.compile(r"decimal\((\d+),(\d+)\)")
 
 # Bookkeeping columns the loader adds to every warehouse table.
@@ -46,6 +52,11 @@ def pg_type(spark_type: str) -> str:
     if match:
         return f"numeric({match[1]},{match[2]})"
     raise ValueError(f"no Postgres mapping for Spark type {spark_type!r}")
+
+
+def canonical_pg_type(kind: str) -> str:
+    """How Postgres' `format_type()` spells `kind`, for comparing with a live table."""
+    return _CANONICAL.get(kind, kind)
 
 
 @dataclass(frozen=True)
