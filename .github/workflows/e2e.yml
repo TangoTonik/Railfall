@@ -15,7 +15,8 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Airflow image build + a DAG run add ~8 minutes to the Spark/load stages.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -141,6 +142,38 @@ jobs:
           keys=$(make -s verify-meteo INGEST_ARGS=--list)
           echo "$keys"
           test "$(echo "$keys" | wc -l)" -eq 6
+
+      - name: Start Airflow (build image, migrate metadata DB, wait healthy)
+        # Needs `make up` first: Terraform owns the Airflow database and role.
+        run: |
+          make airflow
+          curl -fsS "http://localhost:8080/health" | jq -e \
+            '.metadatabase.status == "healthy" and .scheduler.status == "healthy"'
+
+      - name: railfall_ingest DAG runs to success on the real sources
+        # Triggered over the REST API and awaited; the tasks download the real
+        # SNCF and Météo-France files inside the Airflow containers. Same
+        # partition as the CLI steps above, so bronze must not grow.
+        run: |
+          make dag-run DAG=railfall_ingest \
+            DAG_ARGS="--conf '{\"ingest_date\": \"$(date -u +%F)\"}' --timeout 900 --report dag-ingest.json"
+          jq -e '.state == "success"' dag-ingest.json
+          jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-ingest.json
+          jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-ingest.json
+          jq -e '[.tasks[].task_id] | unique
+            == ["ingest_meteo", "ingest_sncf", "verify_meteo", "verify_sncf"]' dag-ingest.json
+
+      - name: DAG run left bronze valid and unduplicated
+        run: |
+          make --no-print-directory verify-sncf
+          make --no-print-directory verify-meteo
+          test "$(make -s verify-sncf INGEST_ARGS=--list | wc -l)" -eq 4
+          test "$(make -s verify-meteo INGEST_ARGS=--list | wc -l)" -eq 6
+
+      - name: Remove Airflow containers (frees memory for Spark)
+        # Removed, not stopped: the restart step's plain `docker compose down`
+        # must not trip over profile containers. Its metadata stays in Postgres.
+        run: docker compose --profile airflow rm --stop --force airflow-webserver airflow-scheduler airflow-init
 
       - name: Build silver from the real bronze (Spark over S3A)
         # Real Spark reading the real bronze through S3A as the pipeline user.
@@ -283,8 +316,8 @@ jobs:
 
       - name: Dump service logs
         if: failure()
-        run: docker compose logs --no-color
+        run: docker compose --profile airflow logs --no-color
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile airflow down -v
