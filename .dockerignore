@@ -1,0 +1,15 @@
+# Only infra/airflow/Dockerfile builds from the repo root; it needs
+# pyproject.toml, README.md and src/. Keep local data and tooling out of the context.
+.git
+.github
+.venv
+data
+dags
+docs
+tests
+infra/terraform/.terraform
+**/__pycache__
+**/*.egg-info
+.pytest_cache
+.ruff_cache
+.env

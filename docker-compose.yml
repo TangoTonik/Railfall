@@ -12,6 +12,40 @@ x-minio-image: &minio-image
       MC_RELEASE: RELEASE.2024-10-08T09-37-26Z
   image: railfall-minio:RELEASE.2024-10-13T13-34-11Z
 
+# Airflow (LocalExecutor) shares one image and environment across its services.
+# They sit behind the `airflow` profile: their metadata database is created by
+# Terraform, so they can only start after `make infra` (`make up` does both).
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: infra/airflow/Dockerfile
+    args:
+      AIRFLOW_VERSION: 2.10.5
+      PYTHON_VERSION: "3.11"
+  image: railfall-airflow:2.10.5
+  profiles: ["airflow"]
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow-local}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-railfall-local-only}
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Railfall settings for the tasks: same least-privilege identities as the
+    # CLI, but addressing the services on the compose network.
+    LAKE_ENDPOINT_URL: http://minio:9000
+    LAKE_BUCKET: ${LAKE_BUCKET:-railfall-lake}
+    LAKE_ACCESS_KEY: ${LAKE_ACCESS_KEY:-railfall-pipeline}
+    LAKE_SECRET_KEY: ${LAKE_SECRET_KEY:-railfall-pipeline-secret}
+    WAREHOUSE_DSN: postgresql://railfall_loader:${TF_VAR_warehouse_loader_password:-loader-local}@postgres:5432/${POSTGRES_DB:-warehouse}
+    METEO_DEPARTMENTS: ${METEO_DEPARTMENTS:-75,69,13}
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs
+
 services:
   postgres:
     image: postgres:16.4-alpine
@@ -47,9 +81,57 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # One-shot: migrate the metadata database and create the web admin user.
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "${AIRFLOW_WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8974/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
   # The lake bucket, pipeline user and warehouse schemas/roles are provisioned
   # by Terraform (infra/terraform, `make infra`), not by a compose job.
 
 volumes:
   pg_data:
   minio_data:
+  airflow_logs:

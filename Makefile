@@ -17,9 +17,14 @@ TF_VAR_minio_server ?= localhost:$(or $(MINIO_API_PORT),9000)
 TF_VAR_postgres_port ?= $(or $(POSTGRES_PORT),5432)
 TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
+TF_VAR_airflow_db_name ?= $(or $(AIRFLOW_DB_NAME),airflow)
+TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
+
+# Airflow services live behind a compose profile (they need `make infra` first).
+AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver verify-silver load verify-load logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver verify-silver load verify-load logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -35,6 +40,12 @@ build: env ## Build the source-built MinIO image
 up: build ## Start Postgres + MinIO, wait until healthy, provision them with Terraform
 	$(COMPOSE) up -d --wait postgres minio
 	$(MAKE) --no-print-directory infra
+
+airflow-build: env ## Build the Airflow image (official image + the railfall package)
+	$(COMPOSE) $(AIRFLOW_PROFILE) build airflow-init
+
+airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait until healthy
+	$(COMPOSE) $(AIRFLOW_PROFILE) up -d --wait airflow-webserver airflow-scheduler
 
 infra-init: ## Download the pinned Terraform providers (retried: the registry is flaky)
 	@for i in 1 2 3; do \
@@ -83,16 +94,16 @@ verify-load: ## Check raw tables against silver: columns, primary key, no duplic
 	$(PYTHON) -m railfall.load.verify $(LOAD_ARGS)
 
 logs: ## Follow service logs
-	$(COMPOSE) logs -f
+	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f
 
 ps: ## Show service status
-	$(COMPOSE) ps
+	$(COMPOSE) $(AIRFLOW_PROFILE) ps
 
 down: ## Stop the stack (keeps data volumes)
-	$(COMPOSE) down
+	$(COMPOSE) $(AIRFLOW_PROFILE) down
 
 clean: ## Stop the stack and delete its data volumes
-	$(COMPOSE) down -v
+	$(COMPOSE) $(AIRFLOW_PROFILE) down -v
 
 lint: ## Run ruff lint + format check
 	ruff check .

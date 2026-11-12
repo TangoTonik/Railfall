@@ -107,3 +107,69 @@ def test_app_uses_terraform_identities_not_admin():
     assert dsn.username != env["POSTGRES_USER"]
     assert dsn.password == env["TF_VAR_warehouse_loader_password"]
     assert dsn.path.lstrip("/") == env["POSTGRES_DB"]
+
+
+AIRFLOW_SERVICES = ("airflow-init", "airflow-webserver", "airflow-scheduler")
+
+
+def test_airflow_services_sit_behind_a_profile(compose):
+    """`docker compose up` must not start Airflow before Terraform made its database."""
+    for name in AIRFLOW_SERVICES:
+        assert compose["services"][name]["profiles"] == ["airflow"], name
+    for name in ("postgres", "minio"):
+        assert "profiles" not in compose["services"][name], name
+
+
+def test_airflow_runs_the_local_executor_on_its_own_database(compose):
+    env = compose["services"]["airflow-scheduler"]["environment"]
+    assert env["AIRFLOW__CORE__EXECUTOR"] == "LocalExecutor"
+    assert env["AIRFLOW__CORE__LOAD_EXAMPLES"] == "false"
+    conn = env["AIRFLOW__DATABASE__SQL_ALCHEMY_CONN"]
+    assert "@postgres:5432/${AIRFLOW_DB_NAME:-airflow}" in conn
+    assert "${POSTGRES_USER" not in conn, "Airflow must not log in as the Postgres admin"
+
+
+def test_airflow_tasks_use_pipeline_identities_on_the_compose_network(compose):
+    env = compose["services"]["airflow-scheduler"]["environment"]
+    assert env["LAKE_ENDPOINT_URL"] == "http://minio:9000"
+    assert env["LAKE_ACCESS_KEY"].startswith("${LAKE_ACCESS_KEY")
+    assert "${MINIO_ROOT" not in env["LAKE_SECRET_KEY"]
+    assert env["WAREHOUSE_DSN"].startswith("postgresql://railfall_loader:")
+    assert "@postgres:5432/" in env["WAREHOUSE_DSN"]
+
+
+def test_airflow_waits_for_its_migration(compose):
+    for name in ("airflow-webserver", "airflow-scheduler"):
+        deps = compose["services"][name]["depends_on"]
+        assert deps["airflow-init"]["condition"] == "service_completed_successfully", name
+    init = compose["services"]["airflow-init"]
+    assert init["environment"]["_AIRFLOW_DB_MIGRATE"] == "true"
+    assert init["depends_on"]["postgres"]["condition"] == "service_healthy"
+
+
+@pytest.mark.parametrize("service", ["airflow-webserver", "airflow-scheduler"])
+def test_airflow_long_running_services_have_healthchecks(compose, service):
+    hc = compose["services"][service]["healthcheck"]
+    assert "curl" in hc["test"] and int(hc["retries"]) > 0
+
+
+def test_dags_are_mounted_read_only(compose):
+    for name in AIRFLOW_SERVICES:
+        assert "./dags:/opt/airflow/dags:ro" in compose["services"][name]["volumes"], name
+    assert (ROOT / "dags").is_dir()
+
+
+def test_airflow_image_matches_its_dockerfile(compose):
+    svc = compose["services"]["airflow-scheduler"]
+    dockerfile = (ROOT / svc["build"]["dockerfile"]).read_text()
+    version = svc["build"]["args"]["AIRFLOW_VERSION"]
+    python = svc["build"]["args"]["PYTHON_VERSION"]
+    assert svc["image"] == f"railfall-airflow:{version}"
+    assert f"FROM apache/airflow:{version}-python{python}" in dockerfile
+    assert f"ARG AIRFLOW_VERSION={version}" in dockerfile
+    assert "constraints-${AIRFLOW_VERSION}" in dockerfile, "install railfall under constraints"
+
+
+def test_airflow_db_password_matches_terraform():
+    env = _env_example()
+    assert env["AIRFLOW_DB_PASSWORD"] == env["TF_VAR_airflow_db_password"]

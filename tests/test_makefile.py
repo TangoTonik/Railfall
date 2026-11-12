@@ -38,6 +38,7 @@ def test_help_lists_documented_targets():
         "verify-meteo",
         "silver",
         "load",
+        "airflow",
         "down",
     )
     for target in (*targets, "clean"):
@@ -118,3 +119,17 @@ def test_terraform_init_is_retried():
     out = _make("-n", "infra-init")
     assert out.count("terraform -chdir=") == 1
     assert "for i in 1 2 3" in out and "sleep" in out
+
+
+def test_airflow_builds_then_waits_for_webserver_and_scheduler():
+    out = _make("-n", "airflow")
+    build = out.find("docker compose --profile airflow build airflow-init")
+    up = out.find(
+        "docker compose --profile airflow up -d --wait airflow-webserver airflow-scheduler"
+    )
+    assert -1 < build < up
+
+
+def test_down_and_clean_include_the_airflow_profile():
+    for target in ("down", "clean"):
+        assert "--profile airflow" in _make("-n", target), target
