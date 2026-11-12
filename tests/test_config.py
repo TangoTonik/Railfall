@@ -66,3 +66,16 @@ def test_meteo_departments_parsed_and_deduplicated():
 def test_empty_meteo_departments_rejected():
     with pytest.raises(ValueError, match="METEO_DEPARTMENTS"):
         Settings.from_env({"METEO_DEPARTMENTS": " , "})
+
+
+def test_airflow_url_follows_the_published_web_port():
+    assert Settings.from_env({}).airflow_url == "http://localhost:8080"
+    assert Settings.from_env({"AIRFLOW_WEB_PORT": "8081"}).airflow_url == "http://localhost:8081"
+    explicit = Settings.from_env({"AIRFLOW_URL": "http://airflow:8080/", "AIRFLOW_WEB_PORT": "1"})
+    assert explicit.airflow_url == "http://airflow:8080"
+
+
+def test_airflow_password_hidden_from_repr():
+    s = Settings.from_env({"AIRFLOW_ADMIN_USER": "ops", "AIRFLOW_ADMIN_PASSWORD": "hunter2"})
+    assert s.airflow_user == "ops"
+    assert "hunter2" not in repr(s)

@@ -23,6 +23,10 @@ class Settings:
     # Météo-France departments to ingest. Default: the three biggest rail hubs
     # (Paris, Lyon, Marseille); the full list is ~100 files per period.
     meteo_departments: tuple[str, ...] = ("75", "69", "13")
+    # Airflow REST API (stable v1, basic auth), used to trigger and await DAG runs.
+    airflow_url: str = "http://localhost:8080"
+    airflow_user: str = "admin"
+    airflow_password: str = field(default="admin", repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -63,4 +67,10 @@ class Settings:
             http_timeout_s=_float("HTTP_TIMEOUT_S", defaults.http_timeout_s),
             http_max_retries=_int("HTTP_MAX_RETRIES", defaults.http_max_retries),
             meteo_departments=_list("METEO_DEPARTMENTS", defaults.meteo_departments),
+            airflow_url=env.get(
+                "AIRFLOW_URL",
+                f"http://localhost:{env.get('AIRFLOW_WEB_PORT', '8080')}",
+            ).rstrip("/"),
+            airflow_user=env.get("AIRFLOW_ADMIN_USER", defaults.airflow_user),
+            airflow_password=env.get("AIRFLOW_ADMIN_PASSWORD", defaults.airflow_password),
         )
