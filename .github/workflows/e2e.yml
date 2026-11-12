@@ -156,12 +156,22 @@ jobs:
         # partition as the CLI steps above, so bronze must not grow.
         run: |
           make dag-run DAG=railfall_ingest \
-            DAG_ARGS="--conf '{\"ingest_date\": \"$(date -u +%F)\"}' --timeout 900 --report dag-ingest.json"
+            DAG_ARGS="--conf '{\"ingest_date\": \"$(date -u +%F)\"}' --timeout 900 --xcom --report dag-ingest.json"
           jq -e '.state == "success"' dag-ingest.json
           jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-ingest.json
           jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-ingest.json
           jq -e '[.tasks[].task_id] | unique
             == ["ingest_meteo", "ingest_sncf", "verify_meteo", "verify_sncf"]' dag-ingest.json
+          # What the tasks returned: bronze already held this partition from the
+          # CLI steps, so the DAG lands nothing new (skipped, or replaced if a
+          # source republished in between) and its checks cover the same datasets.
+          jq -e '[.tasks[] | select(.task_id | startswith("ingest_")) | .result[]]
+            | length == 5 and all(.ok and (.status == "skipped" or .status == "replaced"))' \
+            dag-ingest.json
+          jq -e --slurpfile ing meteo-1.json \
+            '[.tasks[] | select(.task_id == "verify_meteo") | .result[]]
+              | all(.ok and .rows >= 1000)
+                and ([.[].dataset] | sort) == ([$ing[0][].dataset] | sort)' dag-ingest.json
 
       - name: DAG run left bronze valid and unduplicated
         run: |
