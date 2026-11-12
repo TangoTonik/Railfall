@@ -156,3 +156,32 @@ def test_incremental_load_repairs_one_year_on_the_real_warehouse(steps):
     assert "verify-load" in run
     reruns = [j for j, s in enumerate(steps) if "load-2.json" in s.get("run", "")]
     assert reruns and max(reruns) < i, "the full re-run is proven before the incremental one"
+
+
+def test_ingest_dag_is_run_for_real_after_airflow_boots(steps):
+    boot = _index(steps, "make airflow")
+    assert boot > _index(steps, "make up"), "Airflow needs the Terraform-provisioned DB"
+    dag = _index(steps, "make dag-run DAG=railfall_ingest")
+    assert dag > boot
+    run = steps[dag]["run"]
+    assert '.state == "success"' in run
+    assert "--report" in run, "assertions must read the run report, not the log"
+
+
+def test_dag_run_is_checked_for_duplicates_in_bronze(steps):
+    dag = _index(steps, "make dag-run DAG=railfall_ingest")
+    after = " ".join(s.get("run", "") for s in steps[dag + 1 :])
+    assert "verify-sncf INGEST_ARGS=--list" in after
+    assert "verify-meteo INGEST_ARGS=--list" in after
+
+
+def test_airflow_is_cleaned_up_without_touching_the_core_stack(steps):
+    rm = next(s["run"] for s in steps if "rm --stop" in s.get("run", ""))
+    # A bare `compose rm` would remove Postgres and MinIO (and their data) too.
+    assert rm.split("--force", 1)[1].split() == [
+        "airflow-webserver",
+        "airflow-scheduler",
+        "airflow-init",
+    ]
+    teardown = steps[-1]["run"]
+    assert "--profile airflow" in teardown and "down -v" in teardown
