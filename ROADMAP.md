@@ -31,7 +31,7 @@ of their endpoints.
 - [x] Day 6 — PySpark: clean and type bronze → silver (Parquet), run in e2e on the real bronze data
 - [x] Day 7 — PySpark: monthly weather by department, route ↔ department mapping, joined silver table
 - [x] Day 8 — Incremental, idempotent load silver → Postgres; e2e runs it twice and asserts no duplicates
-- [ ] Day 9 — Airflow in Docker Compose: ingestion DAG
+- [x] Day 9 — Airflow in Docker Compose: ingestion DAG
 - [ ] Day 10 — Full DAG ingest → Spark → load, triggered and awaited in e2e until success
 
 ## Week 3 · Modeling & quality

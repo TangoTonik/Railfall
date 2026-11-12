@@ -315,3 +315,44 @@ real silver, verifies, loads again and asserts zero inserts/updates/deletes and
 an identical report, checks each run got its own `run_id`, then deletes the
 latest punctuality year and repairs it with `load --year`, which must re-insert
 exactly the dropped rows.
+
+## Day 9 — Airflow in Docker Compose: ingestion DAG
+
+**Airflow 2.10 with the LocalExecutor, behind a compose profile.** One scheduler
+and one webserver are enough for a daily DAG of a handful of tasks; Celery would
+add Redis and workers for no gain. Airflow 3 was considered and left for later:
+its API and provider ecosystem were still moving, and the DAG only uses the
+TaskFlow API, which carries over. The services sit behind the `airflow` profile
+so `make up` stays light and the Spark stages of e2e keep their memory; `make
+airflow` starts them after Terraform has run.
+
+**Terraform owns Airflow's metadata database too.** Airflow gets its own
+database and role on the existing Postgres server, provisioned like the
+warehouse roles, instead of a second Postgres container or Airflow's
+`create-db` with the admin account. The `airflow` role has no grant on the
+warehouse; the pipeline identities used by the tasks are the same ones the CLI
+uses (`railfall-pipeline` on the lake).
+
+**The image is the official one plus the railfall package.** It is installed
+against Airflow's published constraints so the two dependency trees cannot
+drift silently, and the DAG file stays a thin wiring layer: every task calls
+`railfall.orchestration.ingest`, which wraps the same functions as `make
+ingest-*` / `make verify-*` and is unit-tested without Airflow. A test parses
+the DAG with `ast` so a renamed callable breaks CI rather than the scheduler;
+the DagBag tests run only where Airflow is installed.
+
+**Failures are partial, retries are safe.** A task tries every dataset, returns
+a JSON summary (its XCom) and raises only at the end if any failed, so one bad
+department does not hide the state of the others. Météo-France is a mapped task
+over `METEO_DEPARTMENTS`, one retryable instance per department. Two retries with
+exponential backoff are cheap because bronze landing is idempotent: identical
+content is skipped, so a retry or a re-triggered day never duplicates a file.
+
+**e2e drives the DAG through the REST API, not the CLI.** `railfall.orchestration.airflow_api`
+(also `make dag-run`) triggers a run with a forced `ingest_date`, polls until a
+terminal state with a timeout, and writes a report with every task instance and
+its XCom. e2e runs the DAG on the real SNCF and Météo-France sources after the
+CLI ingestion of the same day and asserts: run `success`, every task (including
+the three mapped departments) `success`, and every dataset reported as skipped
+or replaced, never newly duplicated; bronze is then re-verified. The Airflow
+containers are removed afterwards so Spark gets the runner's memory back.
