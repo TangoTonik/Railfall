@@ -92,3 +92,21 @@ variable "warehouse_reader_password" {
   type        = string
   sensitive   = true
 }
+
+variable "airflow_db_name" {
+  description = "Database holding the Airflow metadata (separate from the warehouse)."
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_db_user" {
+  description = "Role Airflow connects as; owns only the Airflow metadata database."
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_db_password" {
+  description = "Password of the Airflow metadata role."
+  type        = string
+  sensitive   = true
+}

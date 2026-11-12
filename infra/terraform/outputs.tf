@@ -22,3 +22,11 @@ output "warehouse_roles" {
   description = "Pipeline role names keyed by actor (loader, transformer, reader)."
   value       = { for k, r in postgresql_role.pipeline : k => r.name }
 }
+
+output "airflow_database" {
+  description = "Airflow metadata database and the role that owns it."
+  value = {
+    name  = postgresql_database.airflow.name
+    owner = postgresql_database.airflow.owner
+  }
+}

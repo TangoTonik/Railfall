@@ -192,3 +192,32 @@ def test_postgres_db_default_matches_compose(variables):
     compose = yaml.safe_load((TF_DIR.parents[1] / "docker-compose.yml").read_text())
     env = compose["services"]["postgres"]["environment"]
     assert env["POSTGRES_DB"] == f"${{POSTGRES_DB:-{variables['postgres_db']['default']}}}"
+
+
+@pytest.fixture(scope="module")
+def airflow_resources() -> dict[str, dict]:
+    return _resources(_load("airflow.tf"))
+
+
+def test_airflow_metadata_lives_outside_the_warehouse_db(airflow_resources, variables):
+    db = airflow_resources["postgresql_database.airflow"]
+    assert db["name"] == "${var.airflow_db_name}"
+    assert variables["airflow_db_name"]["default"] != variables["postgres_db"]["default"]
+    assert db["owner"] == "${postgresql_role.airflow.name}"
+
+
+def test_airflow_role_has_no_admin_rights(airflow_resources, variables):
+    role = airflow_resources["postgresql_role.airflow"]
+    assert role["login"] is True
+    for flag in ("superuser", "create_database", "create_role"):
+        assert role[flag] is False, flag
+    assert role["password"] == "${var.airflow_db_password}"
+    assert variables["airflow_db_password"]["sensitive"] is True
+    assert "default" not in variables["airflow_db_password"]
+
+
+def test_public_cannot_connect_to_airflow_db(airflow_resources):
+    grant = airflow_resources["postgresql_grant.airflow_revoke_public"]
+    assert grant["role"] == "public"
+    assert grant["object_type"] == "database"
+    assert grant["privileges"] == []
