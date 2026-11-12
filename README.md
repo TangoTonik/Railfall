@@ -55,6 +55,8 @@ make silver       # Spark: clean, type and de-duplicate bronze into silver Parqu
 make verify-silver # read silver back: schema contract, unique non-null keys, not empty
 make load         # merge silver into the warehouse raw schema (LOAD_ARGS="--year 2025" for one year)
 make verify-load  # check raw against silver: columns, primary key, no duplicates, row counts
+make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
+make dag-run DAG=railfall_ingest  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -63,6 +65,7 @@ make down     # stop (keeps data); `make clean` also deletes the volumes
 | Postgres warehouse | `localhost:5432/warehouse` | `rail` / `rail` |
 | MinIO S3 API | http://localhost:9000 | `railfall` / `railfall-secret` |
 | MinIO console | http://localhost:9001 | same as above |
+| Airflow UI / REST API (`make airflow`) | http://localhost:8080 | `admin` / `admin` |
 
 Those are the admin accounts, used only by Terraform. Terraform
 (`infra/terraform`) provisions what the pipelines actually connect with:
@@ -143,6 +146,27 @@ Every run appends one row per table to `raw._load_runs` (run id, scope,
 staged / inserted / updated / unchanged / deleted rows, outcome, timings), so
 "what did the last load do?" has an answer even when it changed nothing.
 
+### Orchestration (Airflow)
+
+Airflow 2.10 (LocalExecutor) runs behind the `airflow` compose profile, so
+`make up` stays light; `make airflow` starts it once Terraform has created its
+metadata database (`airflow`, its own role, no access to the warehouse). The
+image is the official one plus this package, so tasks run the same code as the
+`make` targets.
+
+| DAG | Schedule | Tasks |
+|---|---|---|
+| `railfall_ingest` | daily 05:15 UTC | `ingest_sncf → verify_sncf`; `ingest_meteo[dept]` (mapped over `METEO_DEPARTMENTS`) `→ verify_meteo` |
+
+Each task returns a JSON summary per dataset as its XCom and fails only after
+trying every dataset; retries are safe because bronze landing is idempotent.
+To force a partition and keep the run report with each task's result:
+
+```bash
+make dag-run DAG=railfall_ingest \
+  DAG_ARGS="--conf '{\"ingest_date\": \"2026-11-12\"}' --xcom --report run.json"
+```
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -153,8 +177,10 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ```
 src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load)
+dags/               Airflow DAGs (thin wiring over railfall.orchestration)
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
 infra/minio/        Source build of the pinned MinIO image
+infra/airflow/      Airflow image: official image + the railfall package
 docs/               Architecture decisions and workflow
 ```
