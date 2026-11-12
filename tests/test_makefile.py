@@ -39,6 +39,7 @@ def test_help_lists_documented_targets():
         "silver",
         "load",
         "airflow",
+        "dag-run",
         "down",
     )
     for target in (*targets, "clean"):
@@ -133,3 +134,12 @@ def test_airflow_builds_then_waits_for_webserver_and_scheduler():
 def test_down_and_clean_include_the_airflow_profile():
     for target in ("down", "clean"):
         assert "--profile airflow" in _make("-n", target), target
+
+
+def test_dag_run_triggers_the_ingest_dag_by_default():
+    out = _make("-n", "dag-run", "PYTHON=python", "DAG_ARGS=--report r.json")
+    assert (
+        out.strip()
+        == "python -m railfall.orchestration.airflow_api railfall_ingest --report r.json"
+    )
+    assert "airflow_api other_dag" in _make("-n", "dag-run", "PYTHON=python", "DAG=other_dag")

@@ -11,6 +11,7 @@ PYTHON ?= python
 WAIT ?= 60
 TF ?= terraform
 TF_DIR := infra/terraform
+DAG ?= railfall_ingest
 
 # Terraform reaches MinIO on the host port published by compose.
 TF_VAR_minio_server ?= localhost:$(or $(MINIO_API_PORT),9000)
@@ -24,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo silver verify-silver load verify-load logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -46,6 +47,9 @@ airflow-build: env ## Build the Airflow image (official image + the railfall pac
 
 airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait until healthy
 	$(COMPOSE) $(AIRFLOW_PROFILE) up -d --wait airflow-webserver airflow-scheduler
+
+dag-run: ## Trigger a DAG and wait until it finishes (DAG=railfall_ingest DAG_ARGS=--conf '{...}')
+	$(PYTHON) -m railfall.orchestration.airflow_api $(DAG) $(DAG_ARGS)
 
 infra-init: ## Download the pinned Terraform providers (retried: the registry is flaky)
 	@for i in 1 2 3; do \
