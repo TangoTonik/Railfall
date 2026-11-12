@@ -17,6 +17,7 @@ has no Airflow installed.
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import json
 import sys
@@ -25,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 
 from railfall.config import Settings
@@ -46,6 +47,7 @@ class TaskReport:
     state: str | None
     try_number: int
     duration_s: float | None
+    result: object = None  # the task's `return_value` XCom, when fetched with --xcom
 
 
 @dataclass
@@ -95,6 +97,21 @@ def http_transport(
             return exc.code, payload
 
     return call
+
+
+def parse_xcom(value: object) -> object:
+    """XCom values arrive native (deserialize support on) or as a string: JSON, or
+    the Python repr Airflow falls back to. Unparseable strings are returned as-is."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
 
 
 def _http_error(method: str, path: str, status: int, payload: dict) -> AirflowError:
@@ -186,6 +203,31 @@ class AirflowClient:
         ]
         return sorted(tasks, key=lambda t: (t.task_id, t.map_index))
 
+    def xcom(self, dag_id: str, run_id: str, task_id: str, map_index: int = -1) -> object:
+        """The task's `return_value` XCom, or None when it pushed nothing."""
+        path = (
+            f"/dags/{urllib.parse.quote(dag_id, safe='')}"
+            f"/dagRuns/{urllib.parse.quote(run_id, safe='')}"
+            f"/taskInstances/{urllib.parse.quote(task_id, safe='')}"
+            f"/xcomEntries/return_value?map_index={map_index}&deserialize=true&stringify=false"
+        )
+        status, payload = self._call("GET", path, None)
+        if status == 404:
+            return None
+        if status >= 400:
+            raise _http_error("GET", path, status, payload)
+        return parse_xcom(payload.get("value"))
+
+    def with_results(self, report: RunReport) -> RunReport:
+        """Attach each successful task's return value to the report."""
+        report.tasks = [
+            replace(t, result=self.xcom(report.dag_id, report.dag_run_id, t.task_id, t.map_index))
+            if t.state == "success"
+            else t
+            for t in report.tasks
+        ]
+        return report
+
     def run(
         self,
         dag_id: str,
@@ -235,6 +277,9 @@ def main(argv: list[str] | None = None, *, client: AirflowClient | None = None) 
     parser.add_argument("--poll", type=float, default=10.0)
     parser.add_argument("--report", default=None, help="also write the JSON report to this file")
     parser.add_argument("--json", action="store_true", help="print the JSON report")
+    parser.add_argument(
+        "--xcom", action="store_true", help="add each successful task's return value to the report"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -256,6 +301,8 @@ def main(argv: list[str] | None = None, *, client: AirflowClient | None = None) 
             parse_timeout_s=args.parse_timeout,
             poll_s=args.poll,
         )
+        if args.xcom:
+            report = client.with_results(report)
     except (AirflowError, urllib.error.URLError) as exc:
         print(f"[FAIL] {args.dag_id}: {exc}", file=sys.stderr)
         return 1

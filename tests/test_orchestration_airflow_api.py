@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from railfall.orchestration.airflow_api import AirflowClient, AirflowError, main
+from railfall.orchestration.airflow_api import AirflowClient, AirflowError, main, parse_xcom
 
 DAG = "railfall_ingest"
 
@@ -22,6 +22,7 @@ class FakeAirflow:
         self.calls: list[tuple[str, str, dict | None]] = []
         self.paused = True
         self.runs: dict[str, dict] = {}
+        self.xcoms: dict[tuple[str, int], object] = {}
 
     def __call__(self, method, path, body):
         self.calls.append((method, path, body))
@@ -42,6 +43,13 @@ class FakeAirflow:
                 return 409, {"detail": "DAGRun already exists"}
             self.runs[body["dag_run_id"]] = body
             return 200, {"dag_run_id": body["dag_run_id"], "state": "queued"}
+        if method == "GET" and "/xcomEntries/return_value" in path:
+            task_id = path.split("/taskInstances/")[1].split("/")[0]
+            map_index = int(path.split("map_index=")[1].split("&")[0])
+            key = (task_id, map_index)
+            if key not in self.xcoms:
+                return 404, {"title": "XCom entry not found"}
+            return 200, {"key": "return_value", "value": self.xcoms[key]}
         if method == "GET" and path.endswith("/taskInstances?limit=100"):
             return 200, {
                 "task_instances": [
@@ -184,3 +192,47 @@ def test_cli_writes_report_and_exit_code(tmp_path, capsys):
 def test_cli_rejects_non_object_conf():
     with pytest.raises(SystemExit):
         main([DAG, "--conf", "[1]"], client=client(FakeAirflow()))
+
+
+def test_xcom_results_are_attached_to_successful_tasks():
+    fake = FakeAirflow()
+    fake.xcoms[("ingest_meteo", 0)] = [{"dataset": "daily_75", "status": "skipped"}]
+    # Without deserialize support Airflow returns the Python repr of the value.
+    fake.xcoms[("ingest_meteo", 1)] = "[{'dataset': 'daily_13', 'status': 'landed', 'error': None}]"
+    c = client(fake)
+    report = c.with_results(c.run(DAG, run_id="r", poll_s=1))
+
+    results = {(t.task_id, t.map_index): t.result for t in report.tasks}
+    assert results[("ingest_meteo", 0)] == [{"dataset": "daily_75", "status": "skipped"}]
+    assert results[("ingest_meteo", 1)] == [
+        {"dataset": "daily_13", "status": "landed", "error": None}
+    ]
+    assert results[("verify_sncf", -1)] is None  # pushed nothing -> 404 -> None
+    assert report.to_dict()["tasks"][0]["result"][0]["status"] == "skipped"
+
+
+@pytest.mark.parametrize(
+    ("raw", "parsed"),
+    [
+        ('[{"a": 1}]', [{"a": 1}]),
+        ("[{'a': None, 'b': True}]", [{"a": None, "b": True}]),
+        ({"a": 1}, {"a": 1}),
+        ("not a value", "not a value"),
+    ],
+)
+def test_parse_xcom_accepts_json_repr_and_native(raw, parsed):
+    assert parse_xcom(raw) == parsed
+
+
+def test_main_with_xcom_writes_results_in_report(tmp_path):
+    fake = FakeAirflow()
+    fake.xcoms[("verify_sncf", -1)] = [{"dataset": "regularite", "ok": True}]
+    out = tmp_path / "report.json"
+    code = main(
+        [DAG, "--run-id", "r", "--poll", "1", "--xcom", "--report", str(out)], client=client(fake)
+    )
+    assert code == 0
+    tasks = json.loads(out.read_text())["tasks"]
+    assert [t["result"] for t in tasks if t["task_id"] == "verify_sncf"] == [
+        [{"dataset": "regularite", "ok": True}]
+    ]

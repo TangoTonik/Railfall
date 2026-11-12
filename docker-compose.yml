@@ -34,6 +34,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-railfall-local-only}
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Lets `airflow_api --xcom` read task results as JSON, not a Python repr.
+    AIRFLOW__API__ENABLE_XCOM_DESERIALIZE_SUPPORT: "true"
     # Railfall settings for the tasks: same least-privilege identities as the
     # CLI, but addressing the services on the compose network.
     LAKE_ENDPOINT_URL: http://minio:9000
