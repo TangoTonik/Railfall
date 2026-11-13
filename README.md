@@ -56,7 +56,7 @@ make verify-silver # read silver back: schema contract, unique non-null keys, no
 make load         # merge silver into the warehouse raw schema (LOAD_ARGS="--year 2025" for one year)
 make verify-load  # check raw against silver: columns, primary key, no duplicates, row counts
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
-make dag-run DAG=railfall_ingest  # trigger a DAG over the REST API and wait for it
+make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -151,12 +151,13 @@ staged / inserted / updated / unchanged / deleted rows, outcome, timings), so
 Airflow 2.10 (LocalExecutor) runs behind the `airflow` compose profile, so
 `make up` stays light; `make airflow` starts it once Terraform has created its
 metadata database (`airflow`, its own role, no access to the warehouse). The
-image is the official one plus this package, so tasks run the same code as the
-`make` targets.
+image is the official one plus this package and a Java 17 runtime, so tasks run
+the same code as the `make` targets, Spark included (local mode in the worker).
 
 | DAG | Schedule | Tasks |
 |---|---|---|
 | `railfall_ingest` | daily 05:15 UTC | `ingest_sncf → verify_sncf`; `ingest_meteo[dept]` (mapped over `METEO_DEPARTMENTS`) `→ verify_meteo` |
+| `railfall_pipeline` | daily 05:15 UTC | the ingestion above, then (once both bronze checks pass) `build_silver → verify_silver → load_warehouse → verify_warehouse` |
 
 Each task returns a JSON summary per dataset as its XCom and fails only after
 trying every dataset; retries are safe because bronze landing is idempotent.
@@ -166,6 +167,11 @@ To force a partition and keep the run report with each task's result:
 make dag-run DAG=railfall_ingest \
   DAG_ARGS="--conf '{\"ingest_date\": \"2026-11-12\"}' --xcom --report run.json"
 ```
+
+`railfall_pipeline` is the end-to-end DAG: open data → bronze → silver → `raw.*`.
+Its Spark tasks get a 60-minute timeout; every step is idempotent, so a retry or
+a re-triggered day converges on the same lake and warehouse. Set
+`AIRFLOW_USE_JOB_SCHEDULE=false` to run only what you trigger by hand (e2e does).
 
 ## How this project is built
 

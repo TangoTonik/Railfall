@@ -356,3 +356,40 @@ CLI ingestion of the same day and asserts: run `success`, every task (including
 the three mapped departments) `success`, and every dataset reported as skipped
 or replaced, never newly duplicated; bronze is then re-verified. The Airflow
 containers are removed afterwards so Spark gets the runner's memory back.
+
+## Day 10 — Full DAG: ingest → Spark → load
+
+**One DAG for the whole chain, ingestion DAG kept.** `railfall_pipeline` repeats
+the ingestion tasks of `railfall_ingest` and adds `build_silver → verify_silver →
+load_warehouse → verify_warehouse`. Splitting into DAGs linked by datasets or
+`TriggerDagRunOperator` was considered; one DAG keeps a day's lineage in a single
+run, a single retry surface and a single report for e2e. `railfall_ingest` stays
+for re-landing bronze without paying for Spark.
+
+**Spark runs in local mode inside the Airflow worker.** A Spark standalone
+cluster (or `SparkSubmitOperator`) would add two services and a submit path for
+a dataset that fits in one JVM. The image carries Java 17 and PySpark 4.0 —
+installed after, and outside, Airflow's constraints, which pin 3.5 for a provider
+we don't use — and resolves the hadoop-aws jars at build time so a task never
+waits on Maven Central. Each Spark task opens and always stops its own session;
+the task callables in `railfall.orchestration.pipeline` are unit-tested with an
+injected session and connection.
+
+**Spark waits for both bronze checks.** A silver build on a half-landed day would
+publish partial months, so `build_silver` depends on `verify_sncf` *and*
+`verify_meteo`. Spark tasks get a 60-minute `execution_timeout` (the others 30);
+retries stay safe because silver overwrites partitions and the load merges on keys.
+
+**e2e proves convergence, not just success.** The DAG is triggered after the CLI
+chain has already filled the lake and warehouse, so a correct run must change
+nothing: no new bronze, silver counts equal to the CLI build, a merge with zero
+inserts/updates/deletes and the same per-year warehouse counts. If a source
+republished in between, the internal checks (staged = built = loaded, unique
+keys) still have to hold. The warehouse is then re-read with the CLI after the
+Airflow containers are gone.
+
+**Timetable runs are switched off in e2e.** Unpausing a daily DAG with
+`catchup=False` still creates a run for the latest interval; it would queue next
+to the triggered run or keep writing silver after the awaited one finished.
+`AIRFLOW_USE_JOB_SCHEDULE` maps to `[scheduler] use_job_schedule` (on by
+default); e2e boots Airflow with it off so only the runs it triggers execute.
