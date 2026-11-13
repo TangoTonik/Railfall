@@ -173,3 +173,13 @@ def test_airflow_image_matches_its_dockerfile(compose):
 def test_airflow_db_password_matches_terraform():
     env = _env_example()
     assert env["AIRFLOW_DB_PASSWORD"] == env["TF_VAR_airflow_db_password"]
+
+
+def test_airflow_image_can_run_the_spark_tasks():
+    """The full DAG runs PySpark in the worker: it needs a JRE and Spark 4.0."""
+    dockerfile = (ROOT / "infra/airflow/Dockerfile").read_text()
+    assert "openjdk-17-jre-headless" in dockerfile
+    assert "ENV JAVA_HOME=" in dockerfile
+    assert '"pyspark>=4.0,<4.1"' in dockerfile
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    assert 'spark = ["pyspark>=4.0,<4.1"]' in pyproject, "image and spark extra drifted"
