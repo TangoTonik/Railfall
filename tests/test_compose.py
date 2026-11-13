@@ -183,3 +183,11 @@ def test_airflow_image_can_run_the_spark_tasks():
     assert '"pyspark>=4.0,<4.1"' in dockerfile
     pyproject = (ROOT / "pyproject.toml").read_text()
     assert 'spark = ["pyspark>=4.0,<4.1"]' in pyproject, "image and spark extra drifted"
+
+
+def test_airflow_timetable_runs_can_be_switched_off(compose):
+    # On by default (the DAGs are daily); e2e turns it off so unpausing a DAG
+    # cannot start a catch-up run next to the run it triggers and awaits.
+    env = compose["services"]["airflow-scheduler"]["environment"]
+    assert env["AIRFLOW__SCHEDULER__USE_JOB_SCHEDULE"] == "${AIRFLOW_USE_JOB_SCHEDULE:-true}"
+    assert _env_example()["AIRFLOW_USE_JOB_SCHEDULE"] == "true"

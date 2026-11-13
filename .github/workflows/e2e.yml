@@ -145,8 +145,10 @@ jobs:
 
       - name: Start Airflow (build image, migrate metadata DB, wait healthy)
         # Needs `make up` first: Terraform owns the Airflow database and role.
+        # Timetable runs are off: unpausing a daily DAG would otherwise start a
+        # catch-up run of the latest interval beside the one we trigger.
         run: |
-          make airflow
+          make airflow AIRFLOW_USE_JOB_SCHEDULE=false
           curl -fsS "http://localhost:8080/health" | jq -e \
             '.metadatabase.status == "healthy" and .scheduler.status == "healthy"'
 
