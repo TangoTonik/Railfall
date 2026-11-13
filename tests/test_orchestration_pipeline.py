@@ -88,3 +88,73 @@ def test_verify_silver_fails_on_a_table_never_built(spark, tmp_path) -> None:
         pipeline.verify_silver(
             tables=["stations"], settings=SETTINGS, root=str(tmp_path), spark=spark
         )
+
+
+class FakeConn:
+    pass
+
+
+def test_load_warehouse_reports_every_table_then_fails(monkeypatch, tmp_path) -> None:
+    from railfall.load.job import LoadResult
+
+    seen = {}
+
+    def fake_run(spark, conn, *, root, names, years, schema):
+        seen.update(conn=conn, root=root, names=names, years=years, schema=schema)
+        return [
+            LoadResult("stations", ok=True, target="raw.stations", staged=3, run_id="r1"),
+            LoadResult("weather_daily", ok=False, error="UndefinedTable: boom", run_id="r1"),
+        ]
+
+    monkeypatch.setattr("railfall.load.job.run", fake_run)
+    conn = FakeConn()
+    with pytest.raises(TaskFailed, match="load warehouse: 1 dataset.*weather_daily: Undefined"):
+        pipeline.load_warehouse(
+            years=(2025,), settings=SETTINGS, root=str(tmp_path), spark=FakeSession(), conn=conn
+        )
+    assert seen == {
+        "conn": conn,
+        "root": str(tmp_path),
+        "names": None,
+        "years": [2025],
+        "schema": "raw",
+    }
+
+
+def test_verify_warehouse_summary_is_xcom_safe(monkeypatch, tmp_path) -> None:
+    from railfall.load.verify import WarehouseReport
+
+    monkeypatch.setattr(
+        "railfall.load.verify.verify",
+        lambda *a, **k: [WarehouseReport("stations", ok=True, rows=3, by_year={"2025": 3})],
+    )
+    out = pipeline.verify_warehouse(
+        settings=SETTINGS, root=str(tmp_path), spark=FakeSession(), conn=FakeConn()
+    )
+    assert out[0]["by_year"] == {"2025": 3}
+    json.dumps(out)
+
+
+@pytest.mark.spark
+def test_silver_to_warehouse_twice_on_real_postgres(spark, tmp_path, pg_schema) -> None:
+    import psycopg
+
+    dsn, schema = pg_schema
+    derived_lake(tmp_path)
+    root = str(tmp_path)
+    pipeline.build_silver(DAY, settings=SETTINGS, root=root, spark=spark)
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        kwargs = {
+            "settings": SETTINGS,
+            "root": root,
+            "spark": spark,
+            "conn": conn,
+            "schema": schema,
+        }
+        first = pipeline.load_warehouse(**kwargs)
+        second = pipeline.load_warehouse(**kwargs)
+        checked = pipeline.verify_warehouse(**kwargs)
+    assert all(r["inserted"] == 0 and r["deleted"] == 0 for r in second)
+    assert sum(r["inserted"] for r in first) > 0
+    assert len({r["run_id"] for r in first}) == 1
+    assert all(r["ok"] for r in checked)

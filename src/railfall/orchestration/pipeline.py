@@ -1,7 +1,7 @@
 """Spark and warehouse tasks for the full `railfall_pipeline` DAG.
 
-Each function runs one step of `make silver` / `make verify-silver` (and, below,
-the warehouse load) inside an Airflow task. Like `railfall.orchestration.ingest`:
+Each function runs one step of `make silver` / `make verify-silver` /
+`make load` / `make verify-load` inside an Airflow task. Like `railfall.orchestration.ingest`:
 
 * it returns a JSON-serialisable summary (the task's XCom value);
 * it raises `TaskFailed` when any table failed, after the other tables were
@@ -10,8 +10,9 @@ the warehouse load) inside an Airflow task. Like `railfall.orchestration.ingest`
 
 The SparkSession can be injected (tests share one); otherwise each task starts
 its own session and always stops it, so a failed task never leaks a JVM into
-the worker. `root=None` means the MinIO lake over S3A, exactly like the CLI; a
-local directory works for development and tests.
+the worker; the warehouse connection works the same way. `root=None` means
+the MinIO lake over S3A, exactly like the CLI; a local directory works for
+development and tests.
 """
 
 from __future__ import annotations
@@ -122,5 +123,81 @@ def verify_silver(
             for r in reports
             if not r.ok
         ],
+    )
+    return [asdict(r) for r in reports]
+
+
+@contextmanager
+def _warehouse(settings: Settings, conn) -> Iterator:
+    """The injected connection as-is, or a new autocommit one closed on exit.
+
+    Autocommit because every table opens (and commits or rolls back) its own
+    transaction in `railfall.load.postgres.merge_rows`.
+    """
+    if conn is not None:
+        yield conn
+        return
+    import psycopg
+
+    with psycopg.connect(settings.warehouse_dsn, autocommit=True) as own:
+        yield own
+
+
+def load_warehouse(
+    *,
+    tables: Iterable[str] | None = None,
+    years: Iterable[int] | None = None,
+    schema: str = "raw",
+    settings: Settings | None = None,
+    root: str | None = None,
+    spark: SparkSession | None = None,
+    conn=None,
+) -> Summary:
+    """Silver -> `raw.*`, merged per table; the run is logged in `raw._load_runs`.
+
+    Every result carries the same `run_id`, which the DAG run report surfaces so
+    an operator can find the audit rows of the run.
+    """
+    from railfall.load import job
+
+    settings = settings or Settings.from_env()
+    with (
+        _session(settings, "railfall-load", spark=spark, local=root is not None) as session,
+        _warehouse(settings, conn) as warehouse,
+    ):
+        results = job.run(
+            session,
+            warehouse,
+            root=_root(settings, root),
+            names=tables,
+            years=list(years) if years else None,
+            schema=schema,
+        )
+    _raise_on_failures("load warehouse", [f"{r.table}: {r.error}" for r in results if not r.ok])
+    return [asdict(r) for r in results]
+
+
+def verify_warehouse(
+    *,
+    tables: Iterable[str] | None = None,
+    schema: str = "raw",
+    settings: Settings | None = None,
+    root: str | None = None,
+    spark: SparkSession | None = None,
+    conn=None,
+) -> Summary:
+    """Warehouse = silver: same row counts (per year too), unique non-null primary key."""
+    from railfall.load import verify
+
+    settings = settings or Settings.from_env()
+    with (
+        _session(settings, "railfall-verify-load", spark=spark, local=root is not None) as session,
+        _warehouse(settings, conn) as warehouse,
+    ):
+        reports = verify.verify(
+            session, warehouse, root=_root(settings, root), names=tables, schema=schema
+        )
+    _raise_on_failures(
+        "verify warehouse", [f"{r.table}: {'; '.join(r.errors)}" for r in reports if not r.ok]
     )
     return [asdict(r) for r in reports]
