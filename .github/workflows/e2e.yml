@@ -15,8 +15,9 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    # Airflow image build + a DAG run add ~8 minutes to the Spark/load stages.
-    timeout-minutes: 45
+    # Airflow image build + the ingest DAG add ~8 minutes to the Spark/load
+    # stages; the full pipeline DAG re-runs Spark and the load inside Airflow.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
 
@@ -305,6 +306,70 @@ jobs:
           jq -e --slurpfile one verify-load-1.json \
             '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
              and all(.[]; .ok and .duplicate_keys == 0)' verify-load-3.json
+
+      - name: Restart Airflow for the full pipeline
+        # Same image (cached) and metadata DB as before; Spark now runs inside
+        # the worker, so the CLI Spark steps above are already finished.
+        run: |
+          make airflow AIRFLOW_USE_JOB_SCHEDULE=false
+          curl -fsS "http://localhost:8080/health" | jq -e \
+            '.metadatabase.status == "healthy" and .scheduler.status == "healthy"'
+
+      - name: railfall_pipeline DAG runs to success (ingest -> Spark -> load)
+        # The whole chain in one DAG run on the real sources, the real lake and
+        # the real warehouse, triggered over the REST API and awaited. It runs
+        # over a stack the CLI steps already filled, so it must converge on the
+        # same state: no new bronze, same silver, nothing to merge.
+        run: |
+          make dag-run DAG=railfall_pipeline \
+            DAG_ARGS="--conf '{\"ingest_date\": \"$(date -u +%F)\"}' --timeout 2400 --xcom --report dag-pipeline.json"
+          jq '{state, duration_s, tasks: [.tasks[] | {task_id, map_index, state, duration_s}]}' \
+            dag-pipeline.json
+          jq -e '.state == "success"' dag-pipeline.json
+          jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-pipeline.json
+          jq -e '[.tasks[].task_id] | unique == ["build_silver", "ingest_meteo", "ingest_sncf",
+            "load_warehouse", "verify_meteo", "verify_silver", "verify_sncf", "verify_warehouse"]' \
+            dag-pipeline.json
+          jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-pipeline.json
+          # Spark ran in the Airflow worker over S3A: six valid silver tables, unique keys.
+          jq -e 'def r(id): [.tasks[] | select(.task_id == id) | .result[]];
+            (r("build_silver") | length == 6 and all(.ok))
+            and (r("verify_silver") | length == 6
+              and all(.ok and .duplicate_keys == 0 and .null_keys == 0))
+            and ([r("build_silver")[] | {table, rows}] | sort_by(.table))
+              == ([r("verify_silver")[] | {table, rows}] | sort_by(.table))' dag-pipeline.json
+          # The load staged exactly what the DAG built, and the warehouse matches it.
+          jq -e 'def r(id): [.tasks[] | select(.task_id == id) | .result[]];
+            (r("load_warehouse") | length == 6 and all(.ok and .scope == "full"))
+            and ([r("load_warehouse")[] | {table, rows: .staged}] | sort_by(.table))
+              == ([r("build_silver")[] | {table, rows}] | sort_by(.table))
+            and (r("verify_warehouse") | length == 6 and all(.ok and .rows == .silver_rows
+              and .duplicate_keys == 0 and .null_keys == 0))' dag-pipeline.json
+          # Same bronze as the CLI steps -> same silver and a no-op merge. (If a
+          # source republished in between, the counts above still had to agree.)
+          jq -e --slurpfile silver silver-2.json --slurpfile wh verify-load-1.json '
+            def r(id): [.tasks[] | select(.task_id == id) | .result[]];
+            if [r("ingest_sncf")[], r("ingest_meteo")[]] | all(.status == "skipped") then
+              ([r("build_silver")[] | {table, rows, rejected}] | sort_by(.table))
+                == ([$silver[0][] | {table, rows, rejected}] | sort_by(.table))
+              and (r("load_warehouse") | all(.inserted == 0 and .updated == 0
+                and .deleted == 0 and .unchanged == .staged))
+              and ([r("verify_warehouse")[] | {table, rows, by_year}] | sort_by(.table))
+                == ([$wh[0][] | {table, rows, by_year}] | sort_by(.table))
+            else true end' dag-pipeline.json
+
+      - name: Remove Airflow containers again
+        run: docker compose --profile airflow rm --stop --force airflow-webserver airflow-scheduler airflow-init
+
+      - name: The DAG left the warehouse as it reported
+        # Read back with the CLI, outside Airflow: same counts, keys still unique.
+        run: |
+          make --no-print-directory verify-load LOAD_ARGS="--report verify-load-dag.json"
+          jq -e --slurpfile dag dag-pipeline.json '
+            ([.[] | {table, rows}] | sort_by(.table))
+              == ([$dag[0].tasks[] | select(.task_id == "verify_warehouse") | .result[]
+                   | {table, rows}] | sort_by(.table))
+            and all(.[]; .ok and .duplicate_keys == 0)' verify-load-dag.json
 
       - name: Re-apply is a no-op
         run: |

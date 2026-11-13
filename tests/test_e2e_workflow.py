@@ -185,3 +185,32 @@ def test_airflow_is_cleaned_up_without_touching_the_core_stack(steps):
     ]
     teardown = steps[-1]["run"]
     assert "--profile airflow" in teardown and "down -v" in teardown
+
+
+def test_full_pipeline_dag_is_run_for_real_after_the_cli_stages(steps):
+    dag = _index(steps, "make dag-run DAG=railfall_pipeline")
+    # Airflow is booted again after the CLI Spark/load steps freed the runner.
+    boots = [i for i, s in enumerate(steps) if "make airflow" in s.get("run", "")]
+    assert len(boots) == 2 and boots[1] < dag
+    assert _index(steps, "load-3.json") < boots[1], "the CLI load chain runs first"
+    run = steps[dag]["run"]
+    assert '.state == "success"' in run and "--report dag-pipeline.json" in run
+    assert "--xcom" in run, "assertions must read what the Spark and load tasks returned"
+    for task in ("build_silver", "verify_silver", "load_warehouse", "verify_warehouse"):
+        assert f'"{task}"' in run, task
+    # Converges on the CLI's state: same silver, nothing merged.
+    assert "--slurpfile silver silver-2.json" in run and ".inserted == 0" in run
+
+
+def test_e2e_never_runs_timetable_runs_beside_the_triggered_ones(steps):
+    boots = [s["run"] for s in steps if "make airflow" in s.get("run", "")]
+    assert boots and all("AIRFLOW_USE_JOB_SCHEDULE=false" in b for b in boots)
+
+
+def test_airflow_is_removed_before_the_restart_and_the_warehouse_reread(steps):
+    dag = _index(steps, "make dag-run DAG=railfall_pipeline")
+    rms = [i for i, s in enumerate(steps) if "rm --stop" in s.get("run", "")]
+    restart = _index(steps, "docker compose down\n")
+    assert any(dag < i < restart for i in rms)
+    reread = _index(steps, "verify-load-dag.json")
+    assert dag < reread < restart
