@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: stg_sncf__punctuality_monthly
+    description: TGV punctuality per route-month, typed for the star schema.
+    columns:
+      - name: route_month_id
+        description: Surrogate key md5(month | service | route_id).
+        data_tests: [not_null, unique]
+      - name: month
+        data_tests: [not_null]
+      - name: route_id
+        data_tests: [not_null]
+      - name: service
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["National", "International"]
+      - name: trains_run
+        data_tests: [not_null]
+      - name: arrival_punctuality_rate
+        description: Share of trains run arriving on time (0-1); null when no train ran.
+      - name: cancellation_rate
+        description: Cancelled / planned trains (0-1); null when nothing was planned.
+
+  - name: stg_meteo__weather_daily
+    description: Daily weather per Météo-France station.
+    columns:
+      - name: station_id
+        data_tests: [not_null]
+      - name: day
+        data_tests: [not_null]
+      - name: department
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [station_id, day]
+
+  - name: stg_sncf__stations
+    description: SNCF passenger stations, one row per UIC code.
+    columns:
+      - name: uic_code
+        data_tests: [not_null, unique]
+      - name: department
+        data_tests: [not_null]
