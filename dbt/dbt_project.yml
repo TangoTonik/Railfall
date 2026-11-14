@@ -1,0 +1,25 @@
+# Railfall transformations: raw (loaded by Spark/Python) -> staging -> marts.
+# Run from this directory with `--profiles-dir .`, or through `make dbt-build`.
+name: railfall
+version: "0.1.0"
+config-version: 2
+require-dbt-version: [">=1.10.0", "<2.0.0"]
+
+profile: railfall
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: target
+clean-targets: ["target", "dbt_packages", "logs"]
+
+models:
+  railfall:
+    staging:
+      # Views: staging is a typed, renamed window on raw, always as fresh as raw.
+      +schema: staging
+      +materialized: view
+
+tests:
+  railfall:
+    +severity: error

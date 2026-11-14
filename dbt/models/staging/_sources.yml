@@ -1,0 +1,126 @@
+version: 2
+
+# The `raw` schema is written by `railfall.load` (silver -> Postgres merge). Its
+# tables mirror the silver Parquet column for column, plus `_loaded_at` /
+# `_updated_at`. Columns listed here are the silver contract
+# (`railfall.spark.verify.CONTRACTS`); tests/test_dbt_project.py keeps the two in sync.
+sources:
+  - name: raw
+    schema: raw
+    description: Silver tables merged into Postgres by the Spark loader.
+    loaded_at_field: _updated_at
+    config:
+      freshness:
+        warn_after: {count: 7, period: day}
+        error_after: {count: 40, period: day}
+    tables:
+      - name: punctuality_monthly
+        description: SNCF monthly TGV punctuality per route (AQST), one row per route-month.
+        columns:
+          - name: month
+            description: First day of the month.
+            data_tests: [not_null]
+          - name: year
+          - name: route_id
+            description: Stable hash of the normalised departure and arrival station names.
+            data_tests: [not_null]
+          - name: service
+            data_tests: [not_null]
+          - name: departure_station
+            data_tests: [not_null]
+          - name: arrival_station
+            data_tests: [not_null]
+          - name: trains_planned
+          - name: trains_cancelled
+          - name: trains_late_arrival
+          - name: trains_run
+          - name: arrival_punctuality_rate
+            description: Share of trains run that arrived on time (0-1).
+          - name: pct_cause_external
+        data_tests:
+          - unique_combination_of_columns:
+              arguments:
+                columns: [month, service, departure_station, arrival_station]
+
+      - name: weather_daily
+        description: Météo-France daily climatology per station (BASE/QUOT).
+        columns:
+          - name: department
+            data_tests: [not_null]
+          - name: station_id
+            data_tests: [not_null]
+          - name: day
+            data_tests: [not_null]
+          - name: year
+          - name: month
+          - name: latitude
+          - name: longitude
+          - name: precipitation_mm
+          - name: temp_min_c
+          - name: temp_max_c
+          - name: wind_mean_ms
+        data_tests:
+          - unique_combination_of_columns:
+              arguments:
+                columns: [station_id, day]
+
+      - name: stations
+        description: SNCF passenger stations, one row per UIC code.
+        columns:
+          - name: uic_code
+            data_tests: [not_null, unique]
+          - name: station_name
+          - name: name_key
+          - name: department
+          - name: latitude
+          - name: longitude
+
+      - name: weather_monthly
+        description: Weather aggregated to department x month.
+        columns:
+          - name: department
+            data_tests: [not_null]
+          - name: month
+            data_tests: [not_null]
+          - name: year
+          - name: stations
+          - name: precipitation_mm
+          - name: rain_days
+          - name: heavy_rain_days
+          - name: temp_mean_c
+          - name: temp_min_c
+          - name: frost_days
+          - name: wind_mean_ms
+          - name: wind_max_ms
+          - name: strong_wind_days
+        data_tests:
+          - unique_combination_of_columns:
+              arguments:
+                columns: [department, month]
+
+      - name: route_departments
+        description: TGV route -> departure / arrival department, with match quality.
+        columns:
+          - name: route_id
+            data_tests: [not_null, unique]
+          - name: departure_station
+          - name: arrival_station
+          - name: departure_department
+          - name: arrival_department
+          - name: departure_match
+          - name: arrival_match
+          - name: is_domestic
+
+      - name: route_weather_monthly
+        description: Route-month punctuality joined with the weather at both endpoints.
+        columns:
+          - name: month
+            data_tests: [not_null]
+          - name: service
+            data_tests: [not_null]
+          - name: route_id
+            data_tests: [not_null]
+        data_tests:
+          - unique_combination_of_columns:
+              arguments:
+                columns: [month, service, route_id]
