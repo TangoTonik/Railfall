@@ -35,7 +35,7 @@ of their endpoints.
 - [x] Day 10 — Full DAG ingest → Spark → load, triggered and awaited in e2e until success
 
 ## Week 3 · Modeling & quality
-- [ ] Day 11 — dbt (dbt-postgres): sources and staging models, `dbt build` in e2e
+- [x] Day 11 — dbt (dbt-postgres): sources and staging models, `dbt build` in e2e
 - [ ] Day 12 — dbt star schema: fact_route_month, dim_route, dim_department, dim_month, weather facts
 - [ ] Day 13 — dbt marts: punctuality vs rain / wind / frost, by region and season
 - [ ] Day 14 — Data quality: dbt tests + Great Expectations checkpoint as a DAG task
