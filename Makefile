@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -96,6 +96,12 @@ load: ## Merge silver into the warehouse raw schema, idempotently (LOAD_ARGS=--y
 
 verify-load: ## Check raw tables against silver: columns, primary key, no duplicates, counts
 	$(PYTHON) -m railfall.load.verify $(LOAD_ARGS)
+
+dbt-debug: ## Check dbt can reach the warehouse as the transformer role
+	$(PYTHON) -m railfall.transform.dbt debug
+
+dbt-build: ## Build and test the dbt models (DBT_ARGS=--select staging --json)
+	$(PYTHON) -m railfall.transform.dbt build $(DBT_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f
