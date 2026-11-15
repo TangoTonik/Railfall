@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 8 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 11 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -37,7 +37,7 @@ pytest
 ### Local platform (Postgres + MinIO)
 
 Needs Docker with Compose v2 and Terraform ≥ 1.6; the silver job also needs
-Java 17+ and `pip install -e ".[spark]"`. The first `make up` builds
+Java 17+ and `pip install -e ".[spark]"`, the dbt targets `pip install -e ".[dbt]"`. The first `make up` builds
 MinIO from pinned source (no public images exist any more), which takes a few
 minutes.
 
@@ -55,6 +55,10 @@ make silver       # Spark: clean, type and de-duplicate bronze into silver Parqu
 make verify-silver # read silver back: schema contract, unique non-null keys, not empty
 make load         # merge silver into the warehouse raw schema (LOAD_ARGS="--year 2025" for one year)
 make verify-load  # check raw against silver: columns, primary key, no duplicates, row counts
+make dbt-debug    # dbt reaches the warehouse as the transformer role
+make dbt-freshness # dbt source freshness on raw (warn > 7 days, error > 40)
+make dbt-build DBT_ARGS="--select staging"  # build the staging views and run their tests
+make verify-staging # staging views vs raw: row counts, unique non-null grain
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
 make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes
@@ -173,6 +177,29 @@ Its Spark tasks get a 60-minute timeout; every step is idempotent, so a retry or
 a re-triggered day converges on the same lake and warehouse. Set
 `AIRFLOW_USE_JOB_SCHEDULE=false` to run only what you trigger by hand (e2e does).
 
+### Transformations (dbt)
+
+The dbt project lives in `dbt/` and runs on `dbt-postgres` as the
+least-privilege `railfall_transformer` role: it reads `raw` and owns `staging`
+(and, later, `marts`), with schemas created by Terraform, never by dbt. The
+`make dbt-*` targets drive dbt in-process (`railfall.transform.dbt`) and print a
+per-node report; `--report out.json` keeps it.
+
+| Model | Grain | From |
+|---|---|---|
+| `staging.stg_sncf__punctuality_monthly` | route × month × service (`route_month_id`) | `raw.punctuality_monthly` |
+| `staging.stg_meteo__weather_daily` | station × day | `raw.weather_daily` |
+| `staging.stg_sncf__stations` | UIC code | `raw.stations` |
+
+Staging models are views: typed, renamed, an explicit column list and derived
+rates (e.g. `cancellation_rate`), never a filter or a join, so each view holds
+exactly as many rows as its raw table. Sources declare the silver contract with
+`not_null` / unique-grain tests and a freshness check on `_updated_at`; models
+add value ranges (the same physical bounds Spark enforces), accepted values and
+a cross-column consistency test. AQST cause shares are only range-checked as a
+`warn`, because the published percentages are rounded and drift. `make
+verify-staging` re-checks the views against raw from outside dbt.
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -182,7 +209,8 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 ## Project layout
 
 ```
-src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load)
+src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load, dbt runner)
+dbt/                dbt project: raw sources, staging models, tests
 dags/               Airflow DAGs (thin wiring over railfall.orchestration)
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
