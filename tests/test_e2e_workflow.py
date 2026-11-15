@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -109,7 +110,8 @@ def test_e2e_covers_every_silver_table(steps):
 def test_spark_has_a_jvm_and_silver_survives_restart(steps):
     java = _step(steps, "actions/setup-java@")
     assert int(java["with"]["java-version"]) >= 17
-    assert any("[spark]" in s.get("run", "") for s in steps)
+    # The spark extra, possibly alongside others (e.g. ".[spark,dbt]").
+    assert any(re.search(r"\.\[[^\]]*\bspark\b", s.get("run", "")) for s in steps)
     restart = _index(steps, "docker compose down\n")
     assert any("verify-silver" in s.get("run", "") for s in steps[restart:])
 
@@ -214,3 +216,24 @@ def test_airflow_is_removed_before_the_restart_and_the_warehouse_reread(steps):
     assert any(dag < i < restart for i in rms)
     reread = _index(steps, "verify-load-dag.json")
     assert dag < reread < restart
+
+
+def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
+    runs = [s.get("run", "") for s in steps]
+    install = next(r for r in runs if "pip install -e" in r)
+    assert "dbt" in install, "e2e must install the dbt extra"
+    builds = [i for i, r in enumerate(runs) if "make --no-print-directory dbt-build" in r]
+    assert len(builds) == 2, "build twice to prove dbt re-runs are idempotent"
+    # dbt reads the warehouse the full DAG left behind, before the restart.
+    assert _index(steps, "verify-load-dag.json") < _index(steps, "dbt-debug") < builds[0]
+    assert builds[1] < _index(steps, "docker compose down\n")
+    first = runs[builds[0]]
+    assert "--select staging" in first and 'all(.status == "pass")' in first
+    assert "--slurpfile one dbt-build-1.json" in runs[builds[1]]
+
+
+def test_staging_is_verified_against_raw_and_after_restart(steps):
+    runs = [s.get("run", "") for s in steps]
+    checks = [i for i, r in enumerate(runs) if "verify-staging" in r]
+    assert "--slurpfile raw verify-load-dag.json" in runs[checks[0]]
+    assert max(checks) == _index(steps, "docker compose down\n"), "views survive a restart"

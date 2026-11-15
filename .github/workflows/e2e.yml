@@ -31,8 +31,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install railfall (with Spark)
-        run: pip install -e ".[spark]"
+      - name: Install railfall (with Spark and dbt)
+        run: pip install -e ".[spark,dbt]"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -371,6 +371,45 @@ jobs:
                    | {table, rows}] | sort_by(.table))
             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-dag.json
 
+      - name: dbt reaches the warehouse as the transformer role
+        run: make --no-print-directory dbt-debug
+
+      - name: dbt build staging on the real raw tables
+        # Models and their tests in DAG order; every node must pass, and the
+        # report must cover the three staging views and their tests.
+        run: |
+          make --no-print-directory dbt-build DBT_ARGS="--select staging --report dbt-build-1.json"
+          jq -e '
+            .ok and (.errors | length == 0)
+            and ([.nodes[] | select(.resource_type == "model")] | length == 3
+                 and all(.status == "success"))
+            and ([.nodes[] | select(.resource_type == "test")] | length >= 14
+                 and all(.status == "pass"))' dbt-build-1.json
+
+      - name: Staging matches raw (views, row counts, unique grain)
+        # Checked outside dbt, as the transformer role: each view holds exactly
+        # the rows the loader reported for its raw table.
+        run: |
+          make --no-print-directory verify-staging DBT_VERIFY_ARGS="--report verify-staging-1.json"
+          jq -e --slurpfile raw verify-load-dag.json '
+            ($raw[0] | map({(.table): .rows}) | add) as $n
+            | length == 3
+              and all(.[]; .ok and .kind == "view" and .rows > 0
+                           and .rows == $n[.relation | sub("^staging\\.stg_[a-z]+__"; "")]
+                           and .duplicate_keys == 0 and .null_keys == 0)' verify-staging-1.json
+
+      - name: Re-running dbt build is idempotent
+        # Views are replaced, not appended to: same nodes, same results, same rows.
+        run: |
+          make --no-print-directory dbt-build DBT_ARGS="--select staging --report dbt-build-2.json"
+          jq -e --slurpfile one dbt-build-1.json '
+            .ok and ([.nodes[] | {unique_id, status}] | sort)
+              == ([$one[0].nodes[] | {unique_id, status}] | sort)' dbt-build-2.json
+          make --no-print-directory verify-staging DBT_VERIFY_ARGS="--report verify-staging-2.json"
+          jq -e --slurpfile one verify-staging-1.json \
+            '[.[] | {model, rows}] == [$one[0][] | {model, rows}] and all(.[]; .ok)' \
+            verify-staging-2.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -390,6 +429,7 @@ jobs:
           make --no-print-directory verify-meteo
           make --no-print-directory verify-silver
           make --no-print-directory verify-load
+          make --no-print-directory verify-staging
 
       - name: Dump service logs
         if: failure()

@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build verify-staging logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -102,6 +102,9 @@ dbt-debug: ## Check dbt can reach the warehouse as the transformer role
 
 dbt-build: ## Build and test the dbt models (DBT_ARGS=--select staging --json)
 	$(PYTHON) -m railfall.transform.dbt build $(DBT_ARGS)
+
+verify-staging: ## Check staging views against raw: view, row counts, unique grain
+	$(PYTHON) -m railfall.transform.verify $(DBT_VERIFY_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f

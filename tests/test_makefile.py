@@ -42,6 +42,7 @@ def test_help_lists_documented_targets():
         "dag-run",
         "dbt-debug",
         "dbt-build",
+        "verify-staging",
         "down",
     )
     for target in (*targets, "clean"):
@@ -125,6 +126,11 @@ def test_dbt_build_runs_the_dbt_wrapper_with_extra_args():
 
 def test_dbt_debug_checks_the_connection():
     assert "-m railfall.transform.dbt debug" in _make("-n", "dbt-debug", "PYTHON=python")
+
+
+def test_verify_staging_runs_the_staging_checks():
+    out = _make("-n", "verify-staging", "PYTHON=python", "DBT_VERIFY_ARGS=--json")
+    assert "python -m railfall.transform.verify --json" in out
 
 
 def test_terraform_init_is_retried():
