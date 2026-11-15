@@ -228,7 +228,10 @@ def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
     assert _index(steps, "verify-load-dag.json") < _index(steps, "dbt-debug") < builds[0]
     assert builds[1] < _index(steps, "docker compose down\n")
     first = runs[builds[0]]
-    assert "--select staging" in first and 'all(.status == "pass")' in first
+    assert "--select staging" in first
+    # Only the AQST cause-share range tests may come back as `warn`.
+    assert 'all(.status == "pass" or .status == "warn")' in first
+    assert "pct_cause_" in first
     assert "--slurpfile one dbt-build-1.json" in runs[builds[1]]
 
 

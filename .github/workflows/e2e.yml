@@ -383,8 +383,12 @@ jobs:
             .ok and (.errors | length == 0)
             and ([.nodes[] | select(.resource_type == "model")] | length == 3
                  and all(.status == "success"))
-            and ([.nodes[] | select(.resource_type == "test")] | length >= 14
-                 and all(.status == "pass"))' dbt-build-1.json
+            and ([.nodes[] | select(.resource_type == "test")] | length >= 28
+                 and all(.status == "pass" or .status == "warn"))
+            and ([.nodes[] | select(.status == "warn") | .unique_id]
+                 | all(test("^test\\.railfall\\.accepted_range_.*pct_cause_")))' dbt-build-1.json
+          # Warn-severity tests (AQST cause shares) are reported, never hidden.
+          jq -r '.nodes[] | select(.status == "warn") | "warning: \(.unique_id)"' dbt-build-1.json
 
       - name: Staging matches raw (views, row counts, unique grain)
         # Checked outside dbt, as the transformer role: each view holds exactly
