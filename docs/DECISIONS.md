@@ -393,3 +393,43 @@ Airflow containers are gone.
 to the triggered run or keep writing silver after the awaited one finished.
 `AIRFLOW_USE_JOB_SCHEDULE` maps to `[scheduler] use_job_schedule` (on by
 default); e2e boots Airflow with it off so only the runs it triggers execute.
+
+## Day 11 — dbt sources and staging models
+
+**dbt-postgres on the existing warehouse, as its own role.** dbt runs as
+`railfall_transformer`, which reads `raw` and owns `staging`/`marts` but cannot
+create schemas. Terraform keeps owning the schemas, and a `generate_schema_name`
+override makes dbt build into `staging` verbatim instead of `staging_staging`.
+Every profile value comes from `DBT_*` variables, defaulting to the local stack.
+
+**dbt runs in-process, not as a subprocess.** `railfall.transform.dbt` wraps
+`dbtRunner` and returns a typed per-node report (status, failures, timings) that
+the CLI, the future Airflow tasks and e2e share. dbt can report `success` with
+skipped nodes; the wrapper treats `skipped` as a failure so a silent partial
+build cannot pass. Node results are unit-tested with dbt-shaped fakes, and one
+test runs the real `dbt parse`, which needs no database.
+
+**Staging = views, one per raw table, no joins and no filters.** Silver already
+de-duplicates and rejects impossible rows; staging only types, renames, lists
+columns explicitly (a new raw column must be opted into) and derives obvious
+rates. Views cost nothing to rebuild and can never be staler than raw. Because
+staging is 1:1, `make verify-staging` checks from outside dbt that each view
+holds exactly the loader's raw row count with a unique, non-null grain; a dbt
+bug cannot then pass its own tests unnoticed.
+
+**Tests mirror the silver contract, with one deliberate warning.** Sources carry
+the silver keys (`not_null`, unique grain); models re-check Spark's physical
+bounds (a unit test keeps the YAML and `railfall.spark.weather.BOUNDS` in sync),
+accepted values and a cross-column consistency test. Two small generic tests
+(`accepted_range`, `unique_combination_of_columns`) live in the project rather
+than pulling `dbt_utils`: no package download in CI, and both are a few lines.
+AQST cause shares are only range-checked with `severity: warn`, since the
+published percentages are rounded and occasionally drift past 100; e2e prints
+those warnings and fails if any *other* test warns.
+
+**Freshness is checked, and strict in e2e.** Sources declare `warn_after` 7 days
+and `error_after` 40 days on the loader's `_updated_at` (the SNCF data is
+monthly, so a week without a load is worth a look, a missed month is an error).
+`make dbt-freshness` runs it; e2e requires every raw source to `pass` right after
+the DAG has loaded, then builds staging twice and asserts identical nodes,
+results and row counts to prove the build is idempotent.
