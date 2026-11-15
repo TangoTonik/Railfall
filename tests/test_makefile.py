@@ -42,6 +42,7 @@ def test_help_lists_documented_targets():
         "dag-run",
         "dbt-debug",
         "dbt-build",
+        "dbt-freshness",
         "verify-staging",
         "down",
     )
@@ -122,6 +123,11 @@ def test_verify_load_runs_the_warehouse_check():
 def test_dbt_build_runs_the_dbt_wrapper_with_extra_args():
     out = _make("-n", "dbt-build", "PYTHON=python", "DBT_ARGS=--select staging --json")
     assert "python -m railfall.transform.dbt build --select staging --json" in out
+
+
+def test_dbt_freshness_runs_source_freshness_with_extra_args():
+    out = _make("-n", "dbt-freshness", "PYTHON=python", "DBT_ARGS=--json")
+    assert "python -m railfall.transform.dbt source freshness --json" in out
 
 
 def test_dbt_debug_checks_the_connection():

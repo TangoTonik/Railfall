@@ -32,6 +32,7 @@ class Status(StrEnum):  # mirrors dbt's str enums (RunStatus, TestStatus)
 class Resource(StrEnum):
     MODEL = "model"
     TEST = "test"
+    SOURCE = "source"
 
 
 def _result(uid, rtype, status, *, seconds=0.5, message=None, failures=None):
@@ -98,6 +99,21 @@ def test_successful_build_reports_every_node():
     assert report.counts == {"pass": 1, "success": 1, "warn": 1}
     assert [n.unique_id for n in report.by_type("model")] == ["model.railfall.stg_sncf__stations"]
     assert calls[0][0] == "build"
+
+
+def test_source_freshness_reports_sources_and_fails_on_stale_data():
+    # Freshness results carry the SourceDefinition as `node`: resource_type "source".
+    fresh = _result("source.railfall.raw.stations", Resource.SOURCE, Status.PASS)
+    stale = _result(
+        "source.railfall.raw.weather_daily", Resource.SOURCE, Status.ERROR, message="stale"
+    )
+    calls: list[list[str]] = []
+    report = tdbt.run_dbt("source freshness", invoke=_fake(True, [fresh], calls=calls))
+    assert report.ok and [n.resource_type for n in report.nodes] == ["source"]
+    assert calls[0][:2] == ["source", "freshness"]
+    late = tdbt.run_dbt("source freshness", invoke=_fake(False, [fresh, stale]))
+    assert not late.ok
+    assert late.errors == ["source.railfall.raw.weather_daily: error (stale)"]
 
 
 FAILED = [Status.FAIL, Status.ERROR, Status.RUNTIME_ERROR, Status.SKIPPED]
