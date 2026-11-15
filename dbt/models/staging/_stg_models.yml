@@ -17,12 +17,45 @@ models:
           - accepted_values:
               arguments:
                 values: ["National", "International"]
+      - name: trains_planned
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
       - name: trains_run
-        data_tests: [not_null]
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
       - name: arrival_punctuality_rate
         description: Share of trains run arriving on time (0-1); null when no train ran.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: cancellation_rate
         description: Cancelled / planned trains (0-1); null when nothing was planned.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: pct_cause_external
+        description: >
+          Share of late trains attributed to external causes, in percent (0-100).
+          The six cause shares come straight from AQST and are only range-checked,
+          as a warning: the published shares are rounded and occasionally drift.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+              config:
+                severity: warn
 
   - name: stg_meteo__weather_daily
     description: Daily weather per Météo-France station.
@@ -33,6 +66,44 @@ models:
         data_tests: [not_null]
       - name: department
         data_tests: [not_null]
+      # Silver's physical bounds (railfall.spark.weather.BOUNDS), re-checked on
+      # the warehouse; tests/test_dbt_project.py keeps the two in sync.
+      - name: precipitation_mm
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 500
+      - name: temp_min_c
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -50
+                max_value: 50
+      - name: temp_max_c
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -50
+                max_value: 50
+      - name: temp_mean_c
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -50
+                max_value: 50
+      - name: wind_mean_ms
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: wind_max_hourly_ms
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
     data_tests:
       - unique_combination_of_columns:
           arguments:

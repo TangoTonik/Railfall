@@ -15,10 +15,12 @@ import pytest
 import yaml
 
 from railfall.spark.verify import CONTRACTS
+from railfall.spark.weather import BOUNDS
 from railfall.spark.write import TABLES
 
 DBT_DIR = Path(__file__).resolve().parents[1] / "dbt"
 SOURCES = DBT_DIR / "models" / "staging" / "_sources.yml"
+STG_MODELS = DBT_DIR / "models" / "staging" / "_stg_models.yml"
 
 
 def _raw_source() -> dict:
@@ -65,6 +67,50 @@ def _key_tests(table: dict) -> list[tuple[str, ...]]:
 @pytest.mark.parametrize("name", sorted(TABLES))
 def test_source_uniqueness_test_is_the_contract_key(name):
     assert _key_tests(_tables()[name]) == [tuple(CONTRACTS[name].key)]
+
+
+def _model_columns(model: str) -> dict[str, dict]:
+    doc = yaml.safe_load(STG_MODELS.read_text(encoding="utf-8"))
+    (spec,) = [m for m in doc["models"] if m["name"] == model]
+    return {c["name"]: c for c in spec.get("columns", [])}
+
+
+def _range(column: dict) -> dict | None:
+    for test in column.get("data_tests", []):
+        if isinstance(test, dict) and "accepted_range" in test:
+            return test["accepted_range"]
+    return None
+
+
+@pytest.mark.parametrize("measure", sorted(BOUNDS))
+def test_staging_weather_ranges_are_the_silver_bounds(measure):
+    spec = _range(_model_columns("stg_meteo__weather_daily").get(measure, {}))
+    assert spec is not None, f"{measure} has no accepted_range test"
+    args = spec["arguments"]
+    assert (args["min_value"], args["max_value"]) == BOUNDS[measure]
+    assert args.get("inclusive", True), "silver bounds are inclusive"
+    assert spec.get("config", {}).get("severity", "error") == "error"
+
+
+@pytest.mark.parametrize("rate", ["arrival_punctuality_rate", "cancellation_rate"])
+def test_staging_rates_are_shares_between_zero_and_one(rate):
+    spec = _range(_model_columns("stg_sncf__punctuality_monthly")[rate])
+    assert spec is not None
+    assert (spec["arguments"]["min_value"], spec["arguments"]["max_value"]) == (0, 1)
+
+
+def test_only_aqst_cause_shares_may_warn():
+    # e2e accepts `warn` statuses for these tests only; anything else must fail the build.
+    for model in ("stg_sncf__punctuality_monthly", "stg_meteo__weather_daily"):
+        for name, column in _model_columns(model).items():
+            spec = _range(column)
+            if spec and spec.get("config", {}).get("severity") == "warn":
+                assert name.startswith("pct_cause_"), f"{model}.{name}"
+
+
+def test_local_generic_tests_cover_what_the_project_uses():
+    generic = {p.stem for p in (DBT_DIR / "tests" / "generic").glob("*.sql")}
+    assert {"accepted_range", "unique_combination_of_columns"} <= generic
 
 
 def test_profile_reads_credentials_from_the_environment():
