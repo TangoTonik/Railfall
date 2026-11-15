@@ -235,6 +235,16 @@ def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
     assert "--slurpfile one dbt-build-1.json" in runs[builds[1]]
 
 
+def test_raw_sources_are_fresh_before_dbt_builds(steps):
+    runs = [s.get("run", "") for s in steps]
+    fresh = _index(steps, "dbt-freshness")
+    builds = [i for i, r in enumerate(runs) if "make --no-print-directory dbt-build" in r]
+    # Freshness is judged on what the DAG just loaded, before staging is built.
+    assert _index(steps, "dbt-debug") < fresh < builds[0]
+    assert '.status == "pass"' in runs[fresh], "a just-loaded source must not merely warn"
+    assert '.resource_type == "source"' in runs[fresh]
+
+
 def test_staging_is_verified_against_raw_and_after_restart(steps):
     runs = [s.get("run", "") for s in steps]
     checks = [i for i, r in enumerate(runs) if "verify-staging" in r]

@@ -374,6 +374,16 @@ jobs:
       - name: dbt reaches the warehouse as the transformer role
         run: make --no-print-directory dbt-debug
 
+      - name: Raw sources are fresh (dbt source freshness)
+        # The loader stamps `_updated_at`; the DAG has just merged today's data,
+        # so every declared raw source must pass its freshness check, not warn.
+        run: |
+          make --no-print-directory dbt-freshness DBT_ARGS="--report dbt-freshness.json"
+          jq -e '
+            .ok and (.errors | length == 0)
+            and (.nodes | length == 6)
+            and all(.nodes[]; .resource_type == "source" and .status == "pass")' dbt-freshness.json
+
       - name: dbt build staging on the real raw tables
         # Models and their tests in DAG order; every node must pass, and the
         # report must cover the three staging views and their tests.
