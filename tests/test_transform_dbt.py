@@ -64,7 +64,46 @@ def test_dbt_args_points_at_the_repo_project_by_default(monkeypatch):
     assert args[args.index("--project-dir") + 1] == str(DBT_DIR)
     assert args[args.index("--profiles-dir") + 1] == str(DBT_DIR)
     assert args[args.index("--target") + 1] == "ci"
-    assert args[-2:] == ["--select", "staging"]
+    assert args[args.index("--select") + 1] == "staging"
+
+
+def test_selected_builds_only_run_tests_whose_parents_are_buildable():
+    # Regression: with dbt's default `eager`, `--select staging` also ran the marts'
+    # singular tests (they read a staging view) before the facts existed.
+    args = tdbt.dbt_args("build", select=["staging"])
+    assert args[-2:] == ["--indirect-selection", "buildable"]
+    args = tdbt.dbt_args("test", exclude=["marts"], indirect_selection="cautious")
+    assert args[-2:] == ["--indirect-selection", "cautious"]
+
+
+def test_indirect_selection_is_left_alone_when_it_cannot_apply():
+    assert "--indirect-selection" not in tdbt.dbt_args("build")
+    assert "--indirect-selection" not in tdbt.dbt_args("run", select=["marts"])
+    assert "--indirect-selection" not in tdbt.dbt_args("source freshness", select=["raw"])
+
+
+def test_unknown_indirect_selection_is_rejected():
+    with pytest.raises(ValueError, match="unsupported indirect selection"):
+        tdbt.dbt_args("build", select=["staging"], indirect_selection="lazy")
+
+
+def test_buildable_selection_keeps_marts_tests_out_of_staging():
+    # Real dbt resolution of the project's graph (`dbt ls` needs no database).
+    pytest.importorskip("dbt.cli.main")
+    from dbt.cli.main import dbtRunner
+
+    def tests_for(select: str) -> set[str]:
+        args = tdbt.dbt_args("build", select=[select])
+        res = dbtRunner().invoke(
+            ["ls", *args[1:], "--resource-type", "test", "--output", "name", "--quiet"]
+        )
+        assert res.success, res.exception
+        return set(res.result)
+
+    staging = tests_for("staging")
+    marts = tests_for("marts")
+    assert "assert_fact_route_month_keeps_every_staging_row" not in staging
+    assert "assert_fact_route_month_keeps_every_staging_row" in marts
 
 
 def test_dirs_follow_the_environment(tmp_path):

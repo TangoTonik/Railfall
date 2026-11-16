@@ -24,6 +24,16 @@ from typing import Any
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[3] / "dbt"
 COMMANDS = ("build", "run", "test", "parse", "debug", "compile", "source freshness")
 
+# Commands whose tests are picked up indirectly from the node selection.
+TESTING_COMMANDS = frozenset({"build", "test"})
+INDIRECT_SELECTION = ("eager", "cautious", "buildable", "empty")
+# dbt's default, `eager`, also runs a test when only *one* of its parents is
+# selected: `--select staging` would run the marts' singular tests (which read a
+# staging view and a fact) before the facts exist. `buildable` keeps a test only
+# when all its parents are selected or upstream of the selection, so staging
+# builds alone and `--select marts` still runs the marts tests that read staging.
+DEFAULT_INDIRECT_SELECTION = "buildable"
+
 # Node statuses dbt reports, per its RunStatus / TestStatus / FreshnessStatus enums.
 OK_STATUSES = frozenset({"success", "pass", "warn"})
 FAILED_STATUSES = frozenset({"error", "fail", "runtime error", "skipped"})
@@ -109,9 +119,15 @@ def dbt_args(
     target: str | None = None,
     project: Path | None = None,
     profiles: Path | None = None,
+    indirect_selection: str | None = None,
 ) -> list[str]:
     if command not in COMMANDS:
         raise ValueError(f"unsupported dbt command {command!r}; expected one of {COMMANDS}")
+    if indirect_selection is not None and indirect_selection not in INDIRECT_SELECTION:
+        raise ValueError(
+            f"unsupported indirect selection {indirect_selection!r}; "
+            f"expected one of {INDIRECT_SELECTION}"
+        )
     args = command.split()
     args += ["--project-dir", str(project or project_dir())]
     args += ["--profiles-dir", str(profiles or profiles_dir())]
@@ -121,6 +137,8 @@ def dbt_args(
         args += ["--select", *select]
     if exclude:
         args += ["--exclude", *exclude]
+    if command in TESTING_COMMANDS and (select or exclude):
+        args += ["--indirect-selection", indirect_selection or DEFAULT_INDIRECT_SELECTION]
     return args
 
 
@@ -136,10 +154,17 @@ def run_dbt(
     select: Sequence[str] = (),
     exclude: Sequence[str] = (),
     target: str | None = None,
+    indirect_selection: str | None = None,
     invoke: Callable[[list[str]], Any] | None = None,
 ) -> DbtReport:
     """Invoke dbt and report every executed node; `ok` is False on any failure."""
-    args = dbt_args(command, select=select, exclude=exclude, target=target)
+    args = dbt_args(
+        command,
+        select=select,
+        exclude=exclude,
+        target=target,
+        indirect_selection=indirect_selection,
+    )
     res = (invoke or _default_invoke)(args)
     result = getattr(res, "result", None)
     # `debug` and `parse` return a bool / manifest instead of a results list.
@@ -165,13 +190,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--select", "-s", nargs="+", default=[])
     parser.add_argument("--exclude", nargs="+", default=[])
     parser.add_argument("--target", default=None)
+    parser.add_argument(
+        "--indirect-selection",
+        choices=INDIRECT_SELECTION,
+        default=None,
+        help=f"which tests follow the selection (default: {DEFAULT_INDIRECT_SELECTION})",
+    )
     parser.add_argument("--json", action="store_true", help="print a JSON report")
     parser.add_argument("--report", type=Path, default=None, help="also write the JSON report")
     args = parser.parse_args(argv)
 
     command = " ".join(args.command)
     try:
-        report = run_dbt(command, select=args.select, exclude=args.exclude, target=args.target)
+        report = run_dbt(
+            command,
+            select=args.select,
+            exclude=args.exclude,
+            target=args.target,
+            indirect_selection=args.indirect_selection,
+        )
     except ValueError as exc:
         parser.error(str(exc))
 
