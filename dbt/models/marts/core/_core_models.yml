@@ -43,3 +43,91 @@ models:
           - accepted_values:
               arguments:
                 values: ["winter", "spring", "summer", "autumn"]
+
+  - name: dim_route
+    description: >
+      TGV routes with the department and region of each endpoint. Driven by the
+      punctuality facts, so every fact route has a row even when unplaced.
+    columns:
+      - name: route_id
+        data_tests: [not_null, unique]
+      - name: route_label
+        data_tests: [not_null]
+      - name: departure_department
+        description: Null for foreign or unmatched endpoints.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department
+      - name: arrival_department
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department
+      - name: departure_match
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["alias", "foreign", "exact", "prefix", "unmatched"]
+      - name: arrival_match
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["alias", "foreign", "exact", "prefix", "unmatched"]
+      - name: months_reported
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+
+  - name: fact_route_month
+    description: One row per TGV route, service and month, with AQST counts and rates.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [month, service, route_id]
+    columns:
+      - name: route_month_id
+        data_tests: [not_null, unique]
+      - name: route_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_route')
+                field: route_id
+      - name: month
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_month')
+                field: month
+      - name: departure_department
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department
+      - name: arrival_department
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department
+      - name: trains_on_time
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: arrival_punctuality_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
