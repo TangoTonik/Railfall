@@ -214,3 +214,59 @@ def test_marts_build_as_tables_into_the_marts_schema():
     project = yaml.safe_load((DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8"))
     marts = project["models"]["railfall"]["marts"]
     assert (marts["+schema"], marts["+materialized"]) == ("marts", "table")
+
+
+CORE_MODELS = DBT_DIR / "models" / "marts" / "core" / "_core_models.yml"
+
+
+def _core_model(model: str) -> dict:
+    doc = yaml.safe_load(CORE_MODELS.read_text(encoding="utf-8"))
+    (spec,) = [m for m in doc["models"] if m["name"] == model]
+    return spec
+
+
+def _relationship(column: dict) -> tuple[str, str] | None:
+    for test in column.get("data_tests", []):
+        if isinstance(test, dict) and "relationships" in test:
+            args = test["relationships"]["arguments"]
+            return args["to"], args["field"]
+    return None
+
+
+def test_fact_route_month_grain_is_the_staging_grain():
+    spec = _core_model("fact_route_month")
+    keys = [
+        tuple(t["unique_combination_of_columns"]["arguments"]["columns"])
+        for t in spec.get("data_tests", [])
+        if isinstance(t, dict) and "unique_combination_of_columns" in t
+    ]
+    assert keys == [("month", "service", "route_id")]
+
+
+@pytest.mark.parametrize(
+    ("column", "dimension"),
+    [
+        ("route_id", ("ref('dim_route')", "route_id")),
+        ("month", ("ref('dim_month')", "month")),
+        ("departure_department", ("ref('dim_department')", "department")),
+        ("arrival_department", ("ref('dim_department')", "department")),
+    ],
+)
+def test_fact_route_month_foreign_keys_are_tested(column, dimension):
+    columns = {c["name"]: c for c in _core_model("fact_route_month")["columns"]}
+    assert _relationship(columns[column]) == dimension
+
+
+def test_dim_route_match_methods_are_the_spark_methods():
+    from railfall.spark.route_departments import METHODS
+
+    columns = {c["name"]: c for c in _core_model("dim_route")["columns"]}
+    for side in ("departure_match", "arrival_match"):
+        assert _accepted_values(columns[side]) == list(METHODS)
+    assert "unmatched" in METHODS, "dim_route falls back to 'unmatched'"
+
+
+def test_fact_does_not_drop_rows_singular_test_exists():
+    assert (
+        DBT_DIR / "tests" / "marts" / "assert_fact_route_month_keeps_every_staging_row.sql"
+    ).exists()
