@@ -270,3 +270,41 @@ def test_fact_does_not_drop_rows_singular_test_exists():
     assert (
         DBT_DIR / "tests" / "marts" / "assert_fact_route_month_keeps_every_staging_row.sql"
     ).exists()
+
+
+def test_fact_weather_grain_is_department_month():
+    spec = _core_model("fact_weather_department_month")
+    keys = [
+        tuple(t["unique_combination_of_columns"]["arguments"]["columns"])
+        for t in spec.get("data_tests", [])
+        if isinstance(t, dict) and "unique_combination_of_columns" in t
+    ]
+    assert keys == [("department", "month")]
+
+
+@pytest.mark.parametrize(
+    ("column", "dimension"),
+    [
+        ("department", ("ref('dim_department')", "department")),
+        ("month", ("ref('dim_month')", "month")),
+    ],
+)
+def test_fact_weather_foreign_keys_are_tested(column, dimension):
+    columns = {c["name"]: c for c in _core_model("fact_weather_department_month")["columns"]}
+    assert _relationship(columns[column]) == dimension
+
+
+def test_fact_weather_documents_every_selected_flag():
+    sql = (DBT_DIR / "models" / "marts" / "core" / "fact_weather_department_month.sql").read_text(
+        encoding="utf-8"
+    )
+    columns = {c["name"] for c in _core_model("fact_weather_department_month")["columns"]}
+    for flag in ("is_wet_month", "is_frosty_month", "is_windy_month"):
+        assert f"as {flag}" in sql
+        assert flag in columns
+
+
+def test_fact_weather_does_not_drop_rows_singular_test_exists():
+    assert (
+        DBT_DIR / "tests" / "marts" / "assert_fact_weather_keeps_every_staging_row.sql"
+    ).exists()

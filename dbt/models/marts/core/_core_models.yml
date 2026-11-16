@@ -131,3 +131,60 @@ models:
               arguments:
                 min_value: 0
                 max_value: 1
+
+  - name: fact_weather_department_month
+    description: >
+      One row per department and month: Météo-France monthly weather with
+      shares of the month, anomalies against the department's own calendar-month
+      climatology, and the wet / frosty / windy flags the marts group by.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [department, month]
+    columns:
+      - name: department_month_id
+        data_tests: [not_null, unique]
+      - name: department
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department
+      - name: month
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_month')
+                field: month
+      - name: rain_day_share
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: frost_day_share
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: strong_wind_day_share
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: precipitation_ratio
+        description: Month's rain over the department's mean for that calendar month.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: is_wet_month
+        data_tests: [not_null]
+      - name: is_frosty_month
+        data_tests: [not_null]
+      - name: is_windy_month
+        data_tests: [not_null]
