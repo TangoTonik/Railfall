@@ -138,3 +138,61 @@ def test_cli_writes_report_and_exit_code(monkeypatch, tmp_path, capsys):
     rels["staging.stg_sncf__stations"]["rows"] = 1
     assert tv.main([]) == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+def healthy_marts(rows: int = 120) -> dict[str, dict]:
+    rels = healthy(rows)
+    for m in tv.MART_MODELS.values():
+        rels[f"marts.{m.name}"] = {"kind": "r", "rows": rows}
+    return rels
+
+
+def test_mart_models_match_the_dbt_project():
+    models = Path(__file__).resolve().parents[1] / "dbt" / "models" / "marts" / "core"
+    assert {p.stem for p in models.glob("*.sql")} == set(tv.MART_MODELS)
+    # Facts are pinned to the staging model that drives them.
+    assert all(m.rows_like in tv.STAGING_MODELS for m in tv.MART_MODELS.values() if m.rows_like)
+
+
+def test_healthy_marts_pass():
+    reports = tv.verify(FakeConn(healthy_marts()), layer="marts")
+    assert [r.model for r in reports] == list(tv.MART_MODELS)
+    assert all(r.ok and r.kind == "table" for r in reports)
+
+
+def test_fact_that_drops_rows_fails():
+    rels = healthy_marts()
+    rels["marts.fact_route_month"]["rows"] = 119
+    [report] = tv.verify(FakeConn(rels), ["fact_route_month"], layer="marts")
+    assert not report.ok
+    assert report.source_rows == 120
+    assert "stg_sncf__punctuality_monthly has 120" in report.errors[0]
+
+
+def test_dimension_has_no_row_target_but_must_be_a_keyed_table():
+    rels = healthy_marts()
+    rels["marts.dim_route"] |= {"kind": "v", "dupes": 2}
+    [report] = tv.verify(FakeConn(rels), ["dim_route"], layer="marts")
+    assert report.source_rows == 0
+    assert report.errors == [
+        "marts.dim_route is a view, expected a table",
+        "2 repeated route_id values",
+    ]
+
+
+def test_missing_mart_and_wrong_layer_are_reported():
+    rels = healthy_marts()
+    del rels["marts.dim_month"]
+    [report] = tv.verify(FakeConn(rels), ["dim_month"], layer="marts")
+    assert report.errors == ["marts.dim_month does not exist"]
+    with pytest.raises(ValueError, match="unknown staging model"):
+        tv.select_models(["dim_month"])
+    with pytest.raises(ValueError, match="unknown layer"):
+        tv.select_models([], layer="gold")
+
+
+def test_all_layer_checks_staging_then_marts(monkeypatch, capsys):
+    monkeypatch.setattr(tv, "_connect", lambda dsn: FakeConn(healthy_marts()))
+    assert tv.main(["--layer", "all", "--json"]) == 0
+    models = [r["model"] for r in json.loads(capsys.readouterr().out)]
+    assert models == [*tv.STAGING_MODELS, *tv.MART_MODELS]

@@ -3,6 +3,7 @@
     python -m railfall.transform.verify                  # every staging model
     python -m railfall.transform.verify --model stg_sncf__stations
     python -m railfall.transform.verify --json --report out.json
+    python -m railfall.transform.verify --layer marts    # the star schema
 
 Staging is a 1:1 typed window on `raw`, so for each staging model:
 
@@ -10,6 +11,13 @@ Staging is a 1:1 typed window on `raw`, so for each staging model:
   would silently freeze staging at the last build),
 * it holds exactly as many rows as its `raw` source (no join fan-out, no filter),
 * its declared grain is unique and never null.
+
+Marts are tables, so for each dimension and fact:
+
+* the relation exists in the `marts` schema as a table,
+* it is not empty and its grain is unique and never null,
+* a fact holds exactly as many rows as the staging model it is built from (the
+  dimension joins must neither drop nor fan out rows).
 
 It connects as the transformer role, with the same `DBT_*` variables as
 `dbt/profiles.yml`, so it sees exactly what dbt sees. Exit code 0 only when
@@ -35,6 +43,8 @@ if TYPE_CHECKING:
 
 STAGING_SCHEMA = "staging"
 RAW_SCHEMA = "raw"
+MARTS_SCHEMA = "marts"
+LAYERS = ("staging", "marts", "all")
 
 
 @dataclass(frozen=True)
@@ -52,6 +62,30 @@ STAGING_MODELS: dict[str, StagingModel] = {
         StagingModel("stg_sncf__stations", "stations", ("uic_code",)),
         StagingModel("stg_meteo__weather_monthly", "weather_monthly", ("department", "month")),
         StagingModel("stg_sncf__route_departments", "route_departments", ("route_id",)),
+    )
+}
+
+
+@dataclass(frozen=True)
+class MartModel:
+    name: str
+    key: tuple[str, ...]
+    # Staging model whose row count the mart must equal (facts only).
+    rows_like: str | None = None
+
+
+MART_MODELS: dict[str, MartModel] = {
+    m.name: m
+    for m in (
+        MartModel("dim_department", ("department",)),
+        MartModel("dim_month", ("month",)),
+        MartModel("dim_route", ("route_id",)),
+        MartModel("fact_route_month", ("route_month_id",), "stg_sncf__punctuality_monthly"),
+        MartModel(
+            "fact_weather_department_month",
+            ("department_month_id",),
+            "stg_meteo__weather_monthly",
+        ),
     )
 }
 
@@ -151,15 +185,72 @@ def verify_model(conn: psycopg.Connection, model: StagingModel) -> ModelReport:
     )
 
 
-def select_models(names: Sequence[str]) -> list[StagingModel]:
-    unknown = [n for n in names if n not in STAGING_MODELS]
+def verify_mart(conn: psycopg.Connection, model: MartModel) -> ModelReport:
+    relation = f"{MARTS_SCHEMA}.{model.name}"
+    kind = relation_kind(conn, MARTS_SCHEMA, model.name)
+    if kind is None:
+        return ModelReport(model.name, False, relation, errors=[f"{relation} does not exist"])
+
+    errors: list[str] = []
+    if kind != "table":
+        errors.append(f"{relation} is a {kind}, expected a table")
+
+    rows = conn.execute(count_sql(MARTS_SCHEMA, model.name)).fetchone()[0]
+    dupes, nulls = conn.execute(key_check_sql(MARTS_SCHEMA, model.name, model.key)).fetchone()
+    expected = 0
+    if model.rows_like:
+        expected = conn.execute(count_sql(STAGING_SCHEMA, model.rows_like)).fetchone()[0]
+        if rows != expected:
+            errors.append(
+                f"{relation} has {rows} rows, {STAGING_SCHEMA}.{model.rows_like} has {expected}"
+            )
+
+    if rows == 0:
+        errors.append(f"{relation} is empty")
+    if dupes:
+        errors.append(f"{dupes} repeated {'/'.join(model.key)} values")
+    if nulls:
+        errors.append(f"{nulls} rows with a null {'/'.join(model.key)}")
+
+    return ModelReport(
+        model=model.name,
+        ok=not errors,
+        relation=relation,
+        kind=kind,
+        rows=rows,
+        source_rows=expected,
+        duplicate_keys=dupes,
+        null_keys=nulls,
+        errors=errors,
+    )
+
+
+def _layer_models(layer: str) -> dict[str, StagingModel | MartModel]:
+    if layer not in LAYERS:
+        raise ValueError(f"unknown layer {layer!r}; expected one of {LAYERS}")
+    models: dict[str, StagingModel | MartModel] = {}
+    if layer in ("staging", "all"):
+        models.update(STAGING_MODELS)
+    if layer in ("marts", "all"):
+        models.update(MART_MODELS)
+    return models
+
+
+def select_models(names: Sequence[str], layer: str = "staging") -> list[StagingModel | MartModel]:
+    models = _layer_models(layer)
+    unknown = [n for n in names if n not in models]
     if unknown:
-        raise ValueError(f"unknown staging model(s): {', '.join(unknown)}")
-    return [STAGING_MODELS[n] for n in names] if names else list(STAGING_MODELS.values())
+        raise ValueError(f"unknown {layer} model(s): {', '.join(unknown)}")
+    return [models[n] for n in names] if names else list(models.values())
 
 
-def verify(conn: psycopg.Connection, names: Sequence[str] = ()) -> list[ModelReport]:
-    return [verify_model(conn, m) for m in select_models(names)]
+def verify(
+    conn: psycopg.Connection, names: Sequence[str] = (), layer: str = "staging"
+) -> list[ModelReport]:
+    return [
+        verify_mart(conn, m) if isinstance(m, MartModel) else verify_model(conn, m)
+        for m in select_models(names, layer)
+    ]
 
 
 def _format(reports: Sequence[ModelReport]) -> str:
@@ -180,19 +271,20 @@ def _connect(dsn: str) -> Any:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check dbt staging views against raw.")
+    parser = argparse.ArgumentParser(description="Check what dbt built, from outside dbt.")
+    parser.add_argument("--layer", choices=LAYERS, default="staging")
     parser.add_argument("--model", action="append", default=[], help="repeatable")
     parser.add_argument("--json", action="store_true", help="print a JSON report")
     parser.add_argument("--report", type=Path, default=None, help="also write the JSON report")
     args = parser.parse_args(argv)
 
     try:
-        select_models(args.model)
+        select_models(args.model, args.layer)
     except ValueError as exc:
         parser.error(str(exc))
 
     with _connect(transformer_dsn()) as conn:
-        reports = verify(conn, args.model)
+        reports = verify(conn, args.model, args.layer)
 
     payload = json.dumps([asdict(r) for r in reports], indent=2)
     if args.report:
