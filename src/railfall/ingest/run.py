@@ -268,7 +268,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = Settings.from_env()
 
     def fetcher(url: str) -> Download:
-        return fetch(url, timeout_s=settings.http_timeout_s, max_retries=settings.http_max_retries)
+        return fetch(
+            url,
+            timeout_s=settings.http_timeout_s,
+            max_retries=settings.http_max_retries,
+            backoff_s=settings.http_backoff_s,
+        )
 
     client = lake_client(settings)
     if args.source == METEO_SOURCE:

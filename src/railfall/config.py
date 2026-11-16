@@ -20,6 +20,8 @@ class Settings:
     )
     http_timeout_s: float = 30.0
     http_max_retries: int = 3
+    # First retry wait; doubles each attempt (2 + 4 + 8 s with the defaults).
+    http_backoff_s: float = 2.0
     # Météo-France departments to ingest. Default: the three biggest rail hubs
     # (Paris, Lyon, Marseille); the full list is ~100 files per period.
     meteo_departments: tuple[str, ...] = ("75", "69", "13")
@@ -66,6 +68,7 @@ class Settings:
             warehouse_dsn=env.get("WAREHOUSE_DSN", defaults.warehouse_dsn),
             http_timeout_s=_float("HTTP_TIMEOUT_S", defaults.http_timeout_s),
             http_max_retries=_int("HTTP_MAX_RETRIES", defaults.http_max_retries),
+            http_backoff_s=_float("HTTP_BACKOFF_S", defaults.http_backoff_s),
             meteo_departments=_list("METEO_DEPARTMENTS", defaults.meteo_departments),
             airflow_url=env.get(
                 "AIRFLOW_URL",

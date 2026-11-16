@@ -18,6 +18,12 @@ jobs:
     # Airflow image build + the ingest DAG add ~8 minutes to the Spark/load
     # stages; the full pipeline DAG re-runs Spark and the load inside Airflow.
     timeout-minutes: 70
+    env:
+      # data.gouv.fr sometimes stalls for tens of seconds (e2e run 43866930429
+      # timed out on 4 attempts within 7 s of backoff): be patient with it here.
+      HTTP_TIMEOUT_S: "60"
+      HTTP_MAX_RETRIES: "5"
+      HTTP_BACKOFF_S: "5"
     steps:
       - uses: actions/checkout@v4
 

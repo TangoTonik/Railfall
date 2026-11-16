@@ -16,12 +16,14 @@ def test_env_overrides():
             "LAKE_BUCKET": "prod-lake",
             "HTTP_TIMEOUT_S": "5.5",
             "HTTP_MAX_RETRIES": "0",
+            "HTTP_BACKOFF_S": "0.25",
         }
     )
     assert s.lake_endpoint_url == "https://s3.eu-west-3.amazonaws.com"
     assert s.lake_bucket == "prod-lake"
     assert s.http_timeout_s == 5.5
     assert s.http_max_retries == 0
+    assert s.http_backoff_s == 0.25
 
 
 def test_negative_retries_rejected():
