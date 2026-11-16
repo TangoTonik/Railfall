@@ -222,7 +222,11 @@ def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
     runs = [s.get("run", "") for s in steps]
     install = next(r for r in runs if "pip install -e" in r)
     assert "dbt" in install, "e2e must install the dbt extra"
-    builds = [i for i, r in enumerate(runs) if "make --no-print-directory dbt-build" in r]
+    builds = [
+        i
+        for i, r in enumerate(runs)
+        if "make --no-print-directory dbt-build" in r and "--select staging" in r
+    ]
     assert len(builds) == 2, "build twice to prove dbt re-runs are idempotent"
     # dbt reads the warehouse the full DAG left behind, before the restart.
     assert _index(steps, "verify-load-dag.json") < _index(steps, "dbt-debug") < builds[0]
@@ -233,6 +237,18 @@ def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
     assert 'all(.status == "pass" or .status == "warn")' in first
     assert "pct_cause_" in first
     assert "--slurpfile one dbt-build-1.json" in runs[builds[1]]
+
+
+def test_star_schema_is_built_after_staging_with_its_seed(steps):
+    runs = [s.get("run", "") for s in steps]
+    marts = [i for i, r in enumerate(runs) if "dbt-build" in r and "marts" in r]
+    assert len(marts) == 1
+    staging = _index(steps, "--select staging")
+    assert staging < marts[0] < _index(steps, "docker compose down\n")
+    run = runs[marts[0]]
+    assert "--select departments marts" in run, "dims read the departments seed"
+    assert '.resource_type == "model")] | length == 5' in run
+    assert 'all(.status == "pass")' in run, "no warn-severity tests on the marts"
 
 
 def test_raw_sources_are_fresh_before_dbt_builds(steps):
