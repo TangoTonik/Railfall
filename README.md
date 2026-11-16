@@ -59,6 +59,8 @@ make dbt-debug    # dbt reaches the warehouse as the transformer role
 make dbt-freshness # dbt source freshness on raw (warn > 7 days, error > 40)
 make dbt-build DBT_ARGS="--select staging"  # build the staging views and run their tests
 make verify-staging # staging views vs raw: row counts, unique non-null grain
+make dbt-build DBT_ARGS="--select departments marts"  # seed + star schema and its tests
+make verify-marts   # star schema: tables, unique grain, facts keep every staging row
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
 make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes
@@ -181,7 +183,7 @@ a re-triggered day converges on the same lake and warehouse. Set
 
 The dbt project lives in `dbt/` and runs on `dbt-postgres` as the
 least-privilege `railfall_transformer` role: it reads `raw` and owns `staging`
-(and, later, `marts`), with schemas created by Terraform, never by dbt. The
+and `marts`, with schemas created by Terraform, never by dbt. The
 `make dbt-*` targets drive dbt in-process (`railfall.transform.dbt`) and print a
 per-node report; `--report out.json` keeps it.
 
@@ -200,6 +202,22 @@ a cross-column consistency test. AQST cause shares are only range-checked as a
 `warn`, because the published percentages are rounded and drift. `make
 verify-staging` re-checks the views against raw from outside dbt.
 
+#### Star schema (`marts`)
+
+| Model | Grain | Notes |
+|---|---|---|
+| `dim_department` | department | `departments` seed (code, name, region) + station and weather coverage |
+| `dim_month` | month | gap-free calendar, meteorological season (DJF winter kept in one `season_year`) |
+| `dim_route` | route (departure × arrival) | endpoint departments/regions; unmatched endpoints kept with a null department |
+| `fact_route_month` | route × service × month | additive AQST counts + total delay minutes; FKs to every dim |
+| `fact_weather_department_month` | department × month | monthly weather + anomalies vs the department's own climatology |
+
+Marts are tables. Facts keep counts additive so marts recompute rates at any
+grain instead of averaging averages. Singular tests assert each fact keeps every
+staging row through its dimension joins, and `make verify-marts` re-checks this
+from outside dbt. Selected `build`/`test` runs use `--indirect-selection
+buildable`, so `--select staging` never runs a marts test before the facts exist.
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -210,7 +228,7 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ```
 src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load, dbt runner)
-dbt/                dbt project: raw sources, staging models, tests
+dbt/                dbt project: raw sources, staging, star schema (marts), seeds, tests
 dags/               Airflow DAGs (thin wiring over railfall.orchestration)
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
