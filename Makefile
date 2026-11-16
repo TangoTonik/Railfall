@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness verify-staging logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness verify-staging verify-marts logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -108,6 +108,9 @@ dbt-freshness: ## Check raw sources were loaded recently (warn > 7 days, error >
 
 verify-staging: ## Check staging views against raw: view, row counts, unique grain
 	$(PYTHON) -m railfall.transform.verify $(DBT_VERIFY_ARGS)
+
+verify-marts: ## Check the star schema: tables, unique grain, facts match staging rows
+	$(PYTHON) -m railfall.transform.verify --layer marts $(DBT_VERIFY_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f

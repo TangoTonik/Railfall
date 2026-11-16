@@ -242,13 +242,24 @@ def test_dbt_builds_staging_on_the_final_warehouse_and_is_rerun(steps):
 def test_star_schema_is_built_after_staging_with_its_seed(steps):
     runs = [s.get("run", "") for s in steps]
     marts = [i for i, r in enumerate(runs) if "dbt-build" in r and "marts" in r]
-    assert len(marts) == 1
+    assert len(marts) == 2, "build the star schema twice to prove it is idempotent"
     staging = _index(steps, "--select staging")
-    assert staging < marts[0] < _index(steps, "docker compose down\n")
+    assert staging < marts[0] < marts[1] < _index(steps, "docker compose down\n")
     run = runs[marts[0]]
     assert "--select departments marts" in run, "dims read the departments seed"
     assert '.resource_type == "model")] | length == 5' in run
     assert 'all(.status == "pass")' in run, "no warn-severity tests on the marts"
+    assert "--slurpfile one dbt-build-marts-1.json" in runs[marts[1]]
+
+
+def test_star_schema_is_verified_outside_dbt_and_after_restart(steps):
+    runs = [s.get("run", "") for s in steps]
+    marts = [i for i, r in enumerate(runs) if "dbt-build" in r and "marts" in r]
+    checks = [i for i, r in enumerate(runs) if "verify-marts" in r]
+    assert marts[0] < checks[0] < marts[1], "checked before the rebuild"
+    assert ".rows == .source_rows" in runs[checks[0]], "facts keep every staging row"
+    assert "--slurpfile one verify-marts-1.json" in runs[marts[1]]
+    assert max(checks) == _index(steps, "docker compose down\n"), "tables survive a restart"
 
 
 def test_raw_sources_are_fresh_before_dbt_builds(steps):

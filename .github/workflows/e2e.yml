@@ -444,6 +444,27 @@ jobs:
             and ([.nodes[] | select(.resource_type == "test")] | length >= 40
                  and all(.status == "pass"))' dbt-build-marts-1.json
 
+      - name: Star schema checked from outside dbt
+        # Tables, unique non-null grain, and each fact holds exactly its staging
+        # model's rows: the dimension joins neither dropped nor fanned out months.
+        run: |
+          make --no-print-directory verify-marts DBT_VERIFY_ARGS="--report verify-marts-1.json"
+          jq -e 'length == 5 and all(.[]; .ok and .kind == "table" and .rows > 0)
+            and ([.[] | select(.model | startswith("fact_")) | .rows == .source_rows]
+                 | length == 2 and all)' verify-marts-1.json
+
+      - name: Rebuilding the star schema is idempotent
+        run: |
+          make --no-print-directory dbt-build \
+            DBT_ARGS="--select departments marts --report dbt-build-marts-2.json"
+          jq -e --slurpfile one dbt-build-marts-1.json '
+            .ok and ([.nodes[] | {unique_id, status}] | sort)
+              == ([$one[0].nodes[] | {unique_id, status}] | sort)' dbt-build-marts-2.json
+          make --no-print-directory verify-marts DBT_VERIFY_ARGS="--report verify-marts-2.json"
+          jq -e --slurpfile one verify-marts-1.json \
+            '[.[] | {model, rows}] == [$one[0][] | {model, rows}] and all(.[]; .ok)' \
+            verify-marts-2.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -464,6 +485,7 @@ jobs:
           make --no-print-directory verify-silver
           make --no-print-directory verify-load
           make --no-print-directory verify-staging
+          make --no-print-directory verify-marts
 
       - name: Dump service logs
         if: failure()

@@ -44,6 +44,7 @@ def test_help_lists_documented_targets():
         "dbt-build",
         "dbt-freshness",
         "verify-staging",
+        "verify-marts",
         "down",
     )
     for target in (*targets, "clean"):
@@ -166,3 +167,8 @@ def test_dag_run_triggers_the_ingest_dag_by_default():
         == "python -m railfall.orchestration.airflow_api railfall_ingest --report r.json"
     )
     assert "airflow_api other_dag" in _make("-n", "dag-run", "PYTHON=python", "DAG=other_dag")
+
+
+def test_verify_marts_checks_the_marts_layer():
+    out = _make("-n", "verify-marts", "PYTHON=python", "DBT_VERIFY_ARGS=--json")
+    assert "python -m railfall.transform.verify --layer marts --json" in out
