@@ -433,3 +433,44 @@ monthly, so a week without a load is worth a look, a missed month is an error).
 `make dbt-freshness` runs it; e2e requires every raw source to `pass` right after
 the DAG has loaded, then builds staging twice and asserts identical nodes,
 results and row counts to prove the build is idempotent.
+
+## Day 12 — dbt star schema
+
+**Two facts at their natural grains, not one wide table.** `fact_route_month`
+(route × service × month) and `fact_weather_department_month` (department ×
+month) share `dim_month` and `dim_department`; a route reaches the weather
+through the departments of its endpoints in `dim_route`. Joining weather onto
+every route-month in the core layer would duplicate each department's weather
+across dozens of routes and bake in one join rule (departure? arrival? both?)
+before the analysis marts have decided it. Day 13's marts make that choice.
+
+**Additive measures only in facts.** Counts and a total of arrival-delay minutes
+are stored, so a region or season mart recomputes rates and weighted averages
+from sums instead of averaging averages. Rates are kept on the fact for
+convenience but never aggregated.
+
+**Departments are a seed, regions come with them.** The department → region
+mapping (INSEE codes, post-2016 regions) is small, stable reference data, so it
+is versioned as `seeds/departments.csv` rather than downloaded. `dim_route`
+keeps routes whose endpoints Spark could not place, with a null department and
+`match = unmatched`, so the fact never loses a route-month to an inner join.
+
+**Climatology from the warehouse itself.** Weather anomalies are computed
+against each department's own mean for that calendar month over the years
+loaded. It is not a 30-year WMO normal, but it is one consistent baseline for
+every route and needs no extra data source.
+
+**Row preservation is tested twice.** Singular dbt tests assert each fact holds
+every staging row through its dimension joins, and `verify --layer marts`
+re-checks tables, unique grain and fact-vs-staging row counts as the transformer
+role, outside dbt. e2e builds the marts twice and requires identical nodes,
+statuses and row counts, and re-verifies them after the stack restart.
+
+**`buildable` indirect selection.** The first e2e run with marts failed:
+dbt's default `eager` selection ran the marts' singular tests (which read a
+staging view *and* a fact) during `--select staging`, before the facts existed.
+The runner now passes `--indirect-selection buildable` on selected
+`build`/`test` runs: a test runs only when all its parents are selected or
+upstream of the selection, so staging builds alone and `--select marts` still
+runs the tests that also read staging. A unit test resolves the real graph with
+`dbt ls` to pin this.
