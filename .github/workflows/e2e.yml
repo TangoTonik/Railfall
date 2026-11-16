@@ -430,6 +430,20 @@ jobs:
             '[.[] | {model, rows}] == [$one[0][] | {model, rows}] and all(.[]; .ok)' \
             verify-staging-2.json
 
+      - name: dbt build the star schema on the real staging views
+        # Seed + dims + facts and their tests. Marts are tables, so this is the
+        # first step where dbt writes data; it must pass on the real months.
+        run: |
+          make --no-print-directory dbt-build \
+            DBT_ARGS="--select departments marts --report dbt-build-marts-1.json"
+          jq -e '
+            .ok and (.errors | length == 0)
+            and ([.nodes[] | select(.resource_type == "seed")] | length == 1)
+            and ([.nodes[] | select(.resource_type == "model")] | length == 5
+                 and all(.status == "success"))
+            and ([.nodes[] | select(.resource_type == "test")] | length >= 40
+                 and all(.status == "pass"))' dbt-build-marts-1.json
+
       - name: Re-apply is a no-op
         run: |
           make infra
