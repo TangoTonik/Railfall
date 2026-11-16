@@ -9,6 +9,7 @@ profile: railfall
 
 model-paths: ["models"]
 macro-paths: ["macros"]
+seed-paths: ["seeds"]
 test-paths: ["tests"]
 target-path: target
 clean-targets: ["target", "dbt_packages", "logs"]
@@ -19,6 +20,23 @@ models:
       # Views: staging is a typed, renamed window on raw, always as fresh as raw.
       +schema: staging
       +materialized: view
+    marts:
+      # Tables: the star schema is read by dashboards and analysis, and must not
+      # recompute the staging joins on every query.
+      +schema: marts
+      +materialized: table
+
+seeds:
+  railfall:
+    # Reference data versioned with the code; read by the marts, never by raw.
+    +schema: staging
+    departments:
+      # INSEE codes are text: "01" and "2A" must not become integers.
+      +column_types:
+        department: text
+        department_name: text
+        region_code: text
+        region_name: text
 
 tests:
   railfall:

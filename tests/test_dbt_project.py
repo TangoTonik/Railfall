@@ -177,3 +177,40 @@ def test_monthly_day_counts_never_exceed_a_month(measure):
     spec = _range(_model_columns("stg_meteo__weather_monthly")[measure])
     assert spec is not None
     assert (spec["arguments"]["min_value"], spec["arguments"]["max_value"]) == (0, 31)
+
+
+def _departments_seed() -> list[dict[str, str]]:
+    import csv
+
+    with (DBT_DIR / "seeds" / "departments.csv").open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def test_departments_seed_covers_every_insee_department_once():
+    rows = _departments_seed()
+    codes = [r["department"] for r in rows]
+    assert len(codes) == len(set(codes)) == 101  # 96 metropolitan + 5 overseas
+    assert {"01", "2A", "2B", "75", "974"} <= set(codes)
+    assert "20" not in codes, "Corsica is split into 2A / 2B since 1976"
+    regions = {(r["region_code"], r["region_name"]) for r in rows}
+    assert len(regions) == 18
+    assert len({code for code, _ in regions}) == 18, "one name per region code"
+
+
+def test_route_aliases_point_at_known_departments():
+    from railfall.spark.route_departments import ALIASES
+
+    assert set(ALIASES.values()) <= {r["department"] for r in _departments_seed()}
+
+
+def test_seed_codes_stay_text_in_the_warehouse():
+    project = yaml.safe_load((DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8"))
+    types = project["seeds"]["railfall"]["departments"]["+column_types"]
+    assert types["department"] == "text"
+    assert project["seeds"]["railfall"]["+schema"] in {"staging", "marts"}
+
+
+def test_marts_build_as_tables_into_the_marts_schema():
+    project = yaml.safe_load((DBT_DIR / "dbt_project.yml").read_text(encoding="utf-8"))
+    marts = project["models"]["railfall"]["marts"]
+    assert (marts["+schema"], marts["+materialized"]) == ("marts", "table")

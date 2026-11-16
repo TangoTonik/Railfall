@@ -1,0 +1,17 @@
+version: 2
+
+seeds:
+  - name: departments
+    description: >
+      French departments and their region (INSEE Code officiel géographique,
+      2024 edition: 13 metropolitan regions + 5 overseas). Météo-France files and
+      the SNCF stations export both use these INSEE department codes.
+    columns:
+      - name: department
+        data_tests: [not_null, unique]
+      - name: department_name
+        data_tests: [not_null]
+      - name: region_code
+        data_tests: [not_null]
+      - name: region_name
+        data_tests: [not_null]

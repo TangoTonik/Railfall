@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: dim_department
+    description: French departments with their region and the warehouse's coverage of each.
+    columns:
+      - name: department
+        description: INSEE department code ("01", "2A", "974").
+        data_tests: [not_null, unique]
+      - name: region_name
+        data_tests: [not_null]
+      - name: stations
+        description: SNCF passenger stations located in the department.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: has_weather
+        data_tests: [not_null]
+
+  - name: dim_month
+    description: Gap-free calendar of every month the facts cover, with meteorological seasons.
+    columns:
+      - name: month
+        description: First day of the month (the join key of every fact).
+        data_tests: [not_null, unique]
+      - name: month_of_year
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 12
+      - name: days_in_month
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 28
+                max_value: 31
+      - name: season
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["winter", "spring", "summer", "autumn"]
