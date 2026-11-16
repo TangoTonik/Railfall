@@ -386,12 +386,12 @@ jobs:
 
       - name: dbt build staging on the real raw tables
         # Models and their tests in DAG order; every node must pass, and the
-        # report must cover the three staging views and their tests.
+        # report must cover the five staging views and their tests.
         run: |
           make --no-print-directory dbt-build DBT_ARGS="--select staging --report dbt-build-1.json"
           jq -e '
             .ok and (.errors | length == 0)
-            and ([.nodes[] | select(.resource_type == "model")] | length == 3
+            and ([.nodes[] | select(.resource_type == "model")] | length == 5
                  and all(.status == "success"))
             and ([.nodes[] | select(.resource_type == "test")] | length >= 28
                  and all(.status == "pass" or .status == "warn"))
@@ -407,7 +407,7 @@ jobs:
           make --no-print-directory verify-staging DBT_VERIFY_ARGS="--report verify-staging-1.json"
           jq -e --slurpfile raw verify-load-dag.json '
             ($raw[0] | map({(.table): .rows}) | add) as $n
-            | length == 3
+            | length == 5
               and all(.[]; .ok and .kind == "view" and .rows > 0
                            and .rows == $n[.relation | sub("^staging\\.stg_[a-z]+__"; "")]
                            and .duplicate_keys == 0 and .null_keys == 0)' verify-staging-1.json

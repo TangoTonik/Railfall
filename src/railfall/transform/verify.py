@@ -50,6 +50,8 @@ STAGING_MODELS: dict[str, StagingModel] = {
         StagingModel("stg_sncf__punctuality_monthly", "punctuality_monthly", ("route_month_id",)),
         StagingModel("stg_meteo__weather_daily", "weather_daily", ("station_id", "day")),
         StagingModel("stg_sncf__stations", "stations", ("uic_code",)),
+        StagingModel("stg_meteo__weather_monthly", "weather_monthly", ("department", "month")),
+        StagingModel("stg_sncf__route_departments", "route_departments", ("route_id",)),
     )
 }
 

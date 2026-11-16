@@ -116,3 +116,77 @@ models:
         data_tests: [not_null, unique]
       - name: department
         data_tests: [not_null]
+
+  - name: stg_meteo__weather_monthly
+    description: Weather per department and month (coverage-aware Spark roll-up).
+    columns:
+      - name: department_month_id
+        description: Surrogate key md5(department | month).
+        data_tests: [not_null, unique]
+      - name: department
+        data_tests: [not_null]
+      - name: month
+        data_tests: [not_null]
+      - name: stations
+        description: Distinct stations that reported in the department that month.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      # Day counts are scaled to the month length, so they are averages, not
+      # integers, but never more than 31.
+      - name: rain_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 31
+      - name: heavy_rain_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 31
+      - name: frost_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 31
+      - name: strong_wind_days
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 31
+      - name: precipitation_mm
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [department, month]
+
+  - name: stg_sncf__route_departments
+    description: TGV route -> endpoint departments, with the match method per side.
+    columns:
+      - name: route_id
+        data_tests: [not_null, unique]
+      - name: departure_match
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["alias", "foreign", "exact", "prefix", "unmatched"]
+      - name: arrival_match
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["alias", "foreign", "exact", "prefix", "unmatched"]
+      - name: is_domestic
+        data_tests: [not_null]

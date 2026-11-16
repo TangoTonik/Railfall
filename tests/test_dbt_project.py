@@ -153,3 +153,27 @@ def test_dbt_parse_compiles_the_project(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "target" / "manifest.json").exists()
+
+
+def _accepted_values(column: dict) -> list | None:
+    for test in column.get("data_tests", []):
+        if isinstance(test, dict) and "accepted_values" in test:
+            return test["accepted_values"]["arguments"]["values"]
+    return None
+
+
+@pytest.mark.parametrize("side", ["departure_match", "arrival_match"])
+def test_route_match_methods_are_the_spark_methods(side):
+    from railfall.spark.route_departments import METHODS
+
+    column = _model_columns("stg_sncf__route_departments")[side]
+    assert _accepted_values(column) == list(METHODS)
+
+
+@pytest.mark.parametrize(
+    "measure", ["rain_days", "heavy_rain_days", "frost_days", "strong_wind_days"]
+)
+def test_monthly_day_counts_never_exceed_a_month(measure):
+    spec = _range(_model_columns("stg_meteo__weather_monthly")[measure])
+    assert spec is not None
+    assert (spec["arguments"]["min_value"], spec["arguments"]["max_value"]) == (0, 31)
