@@ -170,3 +170,73 @@ models:
               arguments:
                 min_value: -100
                 max_value: 100
+
+  - name: mart_punctuality_by_weather_intensity
+    description: >
+      Punctuality graded by how hard each factor hit the route-month: rain as a
+      ratio of the monthly normal, frost days, strong-wind days. One baseline
+      band per factor; the gap columns compare every other band with it.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [weather_factor, intensity_band]
+      - unique_combination_of_columns:
+          arguments:
+            columns: [weather_factor, band_order]
+    columns:
+      - name: weather_intensity_id
+        data_tests: [not_null, unique]
+      - name: weather_factor
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["rain", "wind", "frost"]
+      - name: intensity_band
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  ["dry", "normal", "wet", "very_wet", "extreme",
+                   "none", "light", "moderate", "hard", "severe", "strong"]
+      - name: band_order
+        description: 1 is the mildest band of the factor; sort by it to read a dose-response.
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+      - name: is_baseline
+        data_tests: [not_null]
+      - name: route_months
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+      - name: min_intensity
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: arrival_punctuality_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: cancellation_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: punctuality_gap_pts
+        description: Band minus baseline arrival punctuality, in percentage points.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -100
+                max_value: 100

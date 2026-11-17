@@ -7,6 +7,7 @@ without a database and runs wherever dbt is installed (the dev extra).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -411,3 +412,76 @@ def test_weather_marts_share_one_rate_definition(model):
     sql = (WEATHER_IMPACT_DIR / f"{model}.sql").read_text(encoding="utf-8")
     assert "{{ punctuality_rates() }}" in sql
     assert "nullif(trains_run, 0)" not in sql, "rate formula duplicated outside the macro"
+
+
+INTENSITY_SQL = WEATHER_IMPACT_DIR / "mart_punctuality_by_weather_intensity.sql"
+_BAND_ROW = re.compile(
+    r"\('(?P<factor>\w+)',\s*'(?P<band>\w+)',\s*(?P<order>\d+),\s*(?P<lower>[\w.:]+),"
+    r"\s*(?P<upper>[\w.:]+),\s*(?P<baseline>true|false)\)"
+)
+
+
+def _bound(text: str) -> float | None:
+    value = text.split("::")[0]
+    return None if value == "null" else float(value)
+
+
+def _intensity_bands() -> dict[str, list[dict]]:
+    sql = INTENSITY_SQL.read_text(encoding="utf-8")
+    bands: dict[str, list[dict]] = {}
+    for m in _BAND_ROW.finditer(sql):
+        bands.setdefault(m["factor"], []).append(
+            {
+                "band": m["band"],
+                "order": int(m["order"]),
+                "lower": _bound(m["lower"]),
+                "upper": _bound(m["upper"]),
+                "baseline": m["baseline"] == "true",
+            }
+        )
+    return bands
+
+
+def test_intensity_bands_tile_each_factor_without_gaps():
+    bands = _intensity_bands()
+    assert set(bands) == {"rain", "wind", "frost"}
+    for factor, rows in bands.items():
+        rows = sorted(rows, key=lambda r: r["order"])
+        assert [r["order"] for r in rows] == list(range(1, len(rows) + 1)), factor
+        assert rows[0]["lower"] is None and rows[-1]["upper"] is None, factor
+        for below, above in zip(rows, rows[1:], strict=False):
+            assert below["upper"] == above["lower"], (factor, below["band"], above["band"])
+        assert sum(r["baseline"] for r in rows) == 1, f"{factor} needs one baseline band"
+
+
+def test_intensity_band_edges_include_the_flag_thresholds():
+    # The binary mart's adverse split must fall on a band edge, so grading only
+    # refines it. Thresholds as written in fact_weather_department_month.
+    fact = (DBT_DIR / "models" / "marts" / "core" / "fact_weather_department_month.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "1.5 * normal_precipitation_mm" in fact
+    assert "frost_days >= 10" in fact and "strong_wind_days >= 5" in fact
+    edges = {f: {r["lower"] for r in rows} for f, rows in _intensity_bands().items()}
+    assert 1.5 in edges["rain"] and 10 in edges["frost"] and 5 in edges["wind"]
+
+
+def test_intensity_mart_documents_every_band_and_its_grain():
+    spec = _weather_impact_model("mart_punctuality_by_weather_intensity")
+    columns = {c["name"]: c for c in spec["columns"]}
+    declared = set(_accepted_values(columns["intensity_band"]))
+    assert declared == {r["band"] for rows in _intensity_bands().values() for r in rows}
+    keys = [
+        tuple(t["unique_combination_of_columns"]["arguments"]["columns"])
+        for t in spec.get("data_tests", [])
+        if isinstance(t, dict) and "unique_combination_of_columns" in t
+    ]
+    assert ("weather_factor", "intensity_band") in keys
+
+
+def test_intensity_mart_shares_rates_and_reconciles():
+    sql = INTENSITY_SQL.read_text(encoding="utf-8")
+    assert "{{ punctuality_rates() }}" in sql and "avg(" not in sql
+    assert (
+        DBT_DIR / "tests" / "marts" / "assert_intensity_bands_cover_every_route_month.sql"
+    ).exists()
