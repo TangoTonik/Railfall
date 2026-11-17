@@ -474,3 +474,42 @@ The runner now passes `--indirect-selection buildable` on selected
 upstream of the selection, so staging builds alone and `--select marts` still
 runs the tests that also read staging. A unit test resolves the real graph with
 `dbt ls` to pin this.
+
+## Day 13 — dbt marts: punctuality vs rain / wind / frost
+
+**The worse end of the route decides.** A TGV is exposed to the weather where it
+leaves and where it arrives, so `int_route_month_weather` joins both endpoint
+departments and keeps the worse value (wet if either end is wet, the larger
+rain ratio, the more frost and windy days). Averaging the two ends would dilute
+a storm at one terminus; the departure end alone would ignore half the line.
+Routes without weather at either end are kept as `unknown` so the coverage of
+the comparison stays visible, and only the comparisons filter them out.
+
+**Three marts, three questions.** A binary adverse-vs-normal mart per factor
+(the headline), the same split by region × meteorological season (frost in an
+Alpine winter is not rain in a Breton autumn), and a graded intensity mart for
+dose-response. The factors overlap on purpose (a month can be wet and windy):
+each factor is its own comparison rather than one exclusive label, which would
+hide wind behind frost. The single label is still on the intermediate model for
+dashboards that need one colour per route-month.
+
+**Rates from counts, through one macro.** Every mart sums trains and delay
+minutes and recomputes rates with `punctuality_rates()`, so a route with 600
+trains weighs 600 times a route with one; the macro came out of a refactor once
+the second mart duplicated the formulas.
+
+**Band edges reuse the flag thresholds.** The intensity bands include the
+thresholds of the star schema's adverse flags (1.5 × normal rain, 10 frost days,
+5 windy days), so the binary and graded marts agree on what "adverse" means.
+Each factor has one baseline band and the gaps are measured against it.
+
+**Sparse cells stay, flagged.** Region × season cells with only one exposure
+keep their row with a null gap and `has_comparison = false`, instead of
+disappearing. Pooling seasons across years (`years` column) keeps cells large
+enough; Day 17 will test whether the gaps are significant.
+
+**Proved from the reader's side.** `verify --layer marts` checks every mart
+covers the three factors and that trains reconcile with the route-months that
+had weather. e2e then runs `railfall.transform.report` as `railfall_reader` on
+the real marts: it must find every factor and baseline band, and publishes its
+Markdown to the job summary, so the findings are visible on each run.
