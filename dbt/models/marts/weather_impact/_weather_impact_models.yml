@@ -95,3 +95,78 @@ models:
               arguments:
                 min_value: -100
                 max_value: 100
+
+  - name: mart_punctuality_by_region_season
+    description: >
+      The rain / wind / frost comparison of mart_punctuality_by_weather, cut by
+      region (departure end, arrival as fallback) and meteorological season
+      pooled across years. Sparse cells keep their row with a null gap;
+      `has_comparison` marks the region-season-factors with both exposures.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [region_code, season, weather_factor, exposure]
+    columns:
+      - name: region_season_exposure_id
+        data_tests: [not_null, unique]
+      - name: region_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('departments')
+                field: region_code
+      - name: region_name
+        data_tests: [not_null]
+      - name: season
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["winter", "spring", "summer", "autumn"]
+      - name: weather_factor
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["rain", "wind", "frost"]
+      - name: exposure
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["adverse", "normal"]
+      - name: route_months
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+      - name: years
+        description: Distinct season-years pooled into the cell (December counts with the next winter).
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+      - name: has_comparison
+        data_tests: [not_null]
+      - name: arrival_punctuality_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: cancellation_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: punctuality_gap_pts
+        description: Adverse minus normal arrival punctuality, in percentage points.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -100
+                max_value: 100

@@ -362,3 +362,41 @@ def test_weather_mart_rebuilds_rates_from_counts():
     sql = (WEATHER_IMPACT_DIR / "mart_punctuality_by_weather.sql").read_text(encoding="utf-8")
     assert "avg(" not in sql, "rates must be recomputed from summed counts, not averaged"
     assert "sum(trains_run)" in sql
+
+
+def test_region_season_mart_grain_extends_the_national_one():
+    spec = _weather_impact_model("mart_punctuality_by_region_season")
+    keys = [
+        tuple(t["unique_combination_of_columns"]["arguments"]["columns"])
+        for t in spec.get("data_tests", [])
+        if isinstance(t, dict) and "unique_combination_of_columns" in t
+    ]
+    assert keys == [("region_code", "season", "weather_factor", "exposure")]
+    columns = {c["name"]: c for c in spec["columns"]}
+    national = {
+        c["name"]: c for c in _weather_impact_model("mart_punctuality_by_weather")["columns"]
+    }
+    for shared in ("weather_factor", "exposure"):
+        assert _accepted_values(columns[shared]) == _accepted_values(national[shared])
+
+
+def test_region_season_mart_seasons_match_dim_month():
+    dim_month = (DBT_DIR / "models" / "marts" / "core" / "dim_month.sql").read_text(
+        encoding="utf-8"
+    )
+    columns = {
+        c["name"]: c for c in _weather_impact_model("mart_punctuality_by_region_season")["columns"]
+    }
+    for season in _accepted_values(columns["season"]):
+        assert f"'{season}'" in dim_month, season
+
+
+def test_region_season_mart_rebuilds_rates_and_reconciles():
+    sql = (WEATHER_IMPACT_DIR / "mart_punctuality_by_region_season.sql").read_text(encoding="utf-8")
+    assert "avg(" not in sql, "rates must be recomputed from summed counts, not averaged"
+    # Region from the departure end, the arrival end as a fallback, never a fan-out.
+    assert "coalesce(dep.region_code, arr.region_code)" in sql
+    assert "partition by region_code, season, weather_factor" in sql
+    assert (
+        DBT_DIR / "tests" / "marts" / "assert_region_season_mart_reconciles_with_national.sql"
+    ).exists()
