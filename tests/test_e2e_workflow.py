@@ -283,3 +283,13 @@ def test_staging_is_verified_against_raw_and_after_restart(steps):
     checks = [i for i, r in enumerate(runs) if "verify-staging" in r]
     assert "--slurpfile raw verify-load-dag.json" in runs[checks[0]]
     assert max(checks) == _index(steps, "docker compose down\n"), "views survive a restart"
+
+
+def test_weather_report_reads_the_rebuilt_marts_as_the_reader(steps):
+    runs = [s.get("run", "") for s in steps]
+    report = _index(steps, "make --no-print-directory weather-report")
+    rebuild = max(i for i, r in enumerate(runs) if "dbt-build" in r and "marts" in r)
+    assert rebuild < report < _index(steps, "docker compose down\n")
+    assert ".headlines | length == 3" in runs[report], "a headline per factor"
+    assert "select(.is_baseline)" in runs[report], "every factor has its baseline band"
+    assert "GITHUB_STEP_SUMMARY" in runs[report]

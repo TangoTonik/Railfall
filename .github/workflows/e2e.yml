@@ -477,6 +477,18 @@ jobs:
             '[.[] | {model, rows}] == [$one[0][] | {model, rows}] and all(.[]; .ok)' \
             verify-marts-2.json
 
+      - name: The reader sees the weather marts and the report renders
+        # As railfall_reader (what dashboards use): proves dbt's tables carry the
+        # default SELECT grant, and puts the real findings on the run summary.
+        run: |
+          make --no-print-directory weather-report \
+            REPORT_ARGS="--out weather-report.md --report weather-report.json"
+          jq -e '.ok and (.headlines | length == 3)
+            and ([.binary[].weather_factor] | unique == ["frost", "rain", "wind"])
+            and ([.intensity[] | select(.is_baseline)] | length == 3)
+            and (.intensity | all(.route_months > 0))' weather-report.json
+          cat weather-report.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Re-apply is a no-op
         run: |
           make infra
