@@ -247,7 +247,11 @@ def test_star_schema_is_built_after_staging_with_its_seed(steps):
     assert staging < marts[0] < marts[1] < _index(steps, "docker compose down\n")
     run = runs[marts[0]]
     assert "--select departments marts" in run, "dims read the departments seed"
-    assert '.resource_type == "model")] | length == 5' in run
+    # Every model under dbt/models/marts is built and counted, so a new mart
+    # cannot be added without the e2e assertion being updated with it.
+    marts_dir = Path(__file__).resolve().parents[1] / "dbt" / "models" / "marts"
+    n_models = len(list(marts_dir.rglob("*.sql")))
+    assert f'.resource_type == "model")] | length == {n_models}' in run
     assert 'all(.status == "pass")' in run, "no warn-severity tests on the marts"
     assert "--slurpfile one dbt-build-marts-1.json" in runs[marts[1]]
 
