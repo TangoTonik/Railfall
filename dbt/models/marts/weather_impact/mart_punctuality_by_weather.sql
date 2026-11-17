@@ -47,14 +47,7 @@ rated as (
 
     select
         *,
-        round(1 - trains_late_arrival::numeric / nullif(trains_run, 0), 4)
-                                                    as arrival_punctuality_rate,
-        round(trains_late_over_15::numeric / nullif(trains_run, 0), 4)
-                                                    as late_over_15_rate,
-        round(trains_cancelled::numeric / nullif(trains_planned, 0), 4)
-                                                    as cancellation_rate,
-        round(delay_arrival_minutes_total / nullif(trains_run, 0), 2)
-                                                    as avg_delay_arrival_min
+        {{ punctuality_rates() }}
     from aggregated
 
 )

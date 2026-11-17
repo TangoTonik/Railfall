@@ -400,3 +400,14 @@ def test_region_season_mart_rebuilds_rates_and_reconciles():
     assert (
         DBT_DIR / "tests" / "marts" / "assert_region_season_mart_reconciles_with_national.sql"
     ).exists()
+
+
+@pytest.mark.parametrize(
+    "model", ["mart_punctuality_by_weather", "mart_punctuality_by_region_season"]
+)
+def test_weather_marts_share_one_rate_definition(model):
+    macro = (DBT_DIR / "macros" / "punctuality_rates.sql").read_text(encoding="utf-8")
+    assert "avg(" not in macro, "rates must be recomputed from summed counts, not averaged"
+    sql = (WEATHER_IMPACT_DIR / f"{model}.sql").read_text(encoding="utf-8")
+    assert "{{ punctuality_rates() }}" in sql
+    assert "nullif(trains_run, 0)" not in sql, "rate formula duplicated outside the macro"
