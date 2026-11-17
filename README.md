@@ -60,7 +60,7 @@ make dbt-freshness # dbt source freshness on raw (warn > 7 days, error > 40)
 make dbt-build DBT_ARGS="--select staging"  # build the staging views and run their tests
 make verify-staging # staging views vs raw: row counts, unique non-null grain
 make dbt-build DBT_ARGS="--select departments marts"  # seed + star schema and its tests
-make verify-marts   # star schema: tables, unique grain, facts keep every staging row
+make verify-marts   # marts: tables, unique grain, facts keep every row, trains reconcile
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
 make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes

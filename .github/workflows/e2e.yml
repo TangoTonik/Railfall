@@ -450,14 +450,20 @@ jobs:
             and ([.nodes[] | select(.resource_type == "test")] | length >= 40
                  and all(.status == "pass"))' dbt-build-marts-1.json
 
-      - name: Star schema checked from outside dbt
-        # Tables, unique non-null grain, and each fact holds exactly its staging
-        # model's rows: the dimension joins neither dropped nor fanned out months.
+      - name: Star schema and weather marts checked from outside dbt
+        # Tables, unique non-null grain, and each fact holds exactly its source's
+        # rows: the dimension joins neither dropped nor fanned out months. Each
+        # weather mart covers rain, wind and frost and never invents trains.
         run: |
           make --no-print-directory verify-marts DBT_VERIFY_ARGS="--report verify-marts-1.json"
-          jq -e 'length == 5 and all(.[]; .ok and .kind == "table" and .rows > 0)
+          jq -e 'length == 9 and all(.[]; .ok and .kind == "table" and .rows > 0)
             and ([.[] | select(.model | startswith("fact_")) | .rows == .source_rows]
-                 | length == 2 and all)' verify-marts-1.json
+                 | length == 2 and all)
+            and ([.[] | select(.model == "int_route_month_weather")
+                  | .rows == .source_rows] == [true])
+            and ([.[] | select(.model | startswith("mart_"))
+                  | .weather_factors == 3 and .trains_mismatches == 0]
+                 | length == 3 and all)' verify-marts-1.json
 
       - name: Rebuilding the star schema is idempotent
         run: |

@@ -262,6 +262,8 @@ def test_star_schema_is_verified_outside_dbt_and_after_restart(steps):
     checks = [i for i, r in enumerate(runs) if "verify-marts" in r]
     assert marts[0] < checks[0] < marts[1], "checked before the rebuild"
     assert ".rows == .source_rows" in runs[checks[0]], "facts keep every staging row"
+    assert ".trains_mismatches == 0" in runs[checks[0]], "weather marts reconcile trains"
+    assert ".weather_factors == 3" in runs[checks[0]], "rain, wind and frost all present"
     assert "--slurpfile one verify-marts-1.json" in runs[marts[1]]
     assert max(checks) == _index(steps, "docker compose down\n"), "tables survive a restart"
 
