@@ -17,7 +17,11 @@ Marts are tables, so for each dimension and fact:
 * the relation exists in the `marts` schema as a table,
 * it is not empty and its grain is unique and never null,
 * a fact holds exactly as many rows as the staging model it is built from (the
-  dimension joins must neither drop nor fan out rows).
+  dimension joins must neither drop nor fan out rows), and the route-month
+  weather model exactly as many as fact_route_month,
+* a weather-impact mart covers all three factors (rain, wind, frost), and no
+  factor sums to more trains than the route-months with weather ran; the binary
+  mart, which splits every one of them into adverse / normal, sums to exactly that.
 
 It connects as the transformer role, with the same `DBT_*` variables as
 `dbt/profiles.yml`, so it sees exactly what dbt sees. Exit code 0 only when
@@ -70,8 +74,13 @@ STAGING_MODELS: dict[str, StagingModel] = {
 class MartModel:
     name: str
     key: tuple[str, ...]
-    # Staging model whose row count the mart must equal (facts only).
+    # Model whose row count the mart must equal (facts only), in `rows_like_schema`.
     rows_like: str | None = None
+    rows_like_schema: str = STAGING_SCHEMA
+    # Weather-impact marts: per-factor trains_run reconciled with the route-months
+    # that had weather. `exact` for a mart that partitions every one of them.
+    reconciles_trains: bool = False
+    exact_trains: bool = False
 
 
 MART_MODELS: dict[str, MartModel] = {
@@ -86,8 +95,34 @@ MART_MODELS: dict[str, MartModel] = {
             ("department_month_id",),
             "stg_meteo__weather_monthly",
         ),
+        MartModel(
+            "int_route_month_weather",
+            ("route_month_id",),
+            "fact_route_month",
+            rows_like_schema=MARTS_SCHEMA,
+        ),
+        MartModel(
+            "mart_punctuality_by_weather",
+            ("weather_exposure_id",),
+            reconciles_trains=True,
+            exact_trains=True,
+        ),
+        # Routes with no French end have no region; null intensities have no band.
+        MartModel(
+            "mart_punctuality_by_region_season",
+            ("region_season_exposure_id",),
+            reconciles_trains=True,
+        ),
+        MartModel(
+            "mart_punctuality_by_weather_intensity",
+            ("weather_intensity_id",),
+            reconciles_trains=True,
+        ),
     )
 }
+
+WEATHER_FACTORS = ("rain", "wind", "frost")
+ROUTE_MONTH_WEATHER = "int_route_month_weather"
 
 
 @dataclass(frozen=True)
@@ -100,6 +135,8 @@ class ModelReport:
     source_rows: int = 0
     duplicate_keys: int = 0
     null_keys: int = 0
+    weather_factors: int = 0
+    trains_mismatches: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -147,6 +184,29 @@ def key_check_sql(schema: str, name: str, key: Sequence[str]) -> sql.Composed:
         " (select count(*) from (select 1 from {rel} group by {cols} having count(*) > 1) d),"
         " (select count(*) from {rel} where {any_null})"
     ).format(rel=sql.Identifier(schema, name), cols=cols, any_null=any_null)
+
+
+def trains_check_sql(name: str, exact: bool) -> sql.Composed:
+    """One row: (distinct weather factors, factors whose trains_run breaks the bound).
+
+    The bound is the trains run by route-months with weather at either end; a mart
+    that partitions all of them must hit it exactly, the others may only fall short.
+    """
+    op = sql.SQL("<>" if exact else ">")
+    return sql.SQL(
+        "select"
+        " (select count(distinct weather_factor) from {mart}),"
+        " (select count(*) from"
+        "   (select weather_factor, coalesce(sum(trains_run), 0) as trains from {mart}"
+        "    group by weather_factor) f"
+        "  where f.trains {op}"
+        "   (select coalesce(sum(trains_run), 0) from {base}"
+        "    where weather_coverage <> 'none'))"
+    ).format(
+        mart=sql.Identifier(MARTS_SCHEMA, name),
+        base=sql.Identifier(MARTS_SCHEMA, ROUTE_MONTH_WEATHER),
+        op=op,
+    )
 
 
 def verify_model(conn: psycopg.Connection, model: StagingModel) -> ModelReport:
@@ -199,10 +259,23 @@ def verify_mart(conn: psycopg.Connection, model: MartModel) -> ModelReport:
     dupes, nulls = conn.execute(key_check_sql(MARTS_SCHEMA, model.name, model.key)).fetchone()
     expected = 0
     if model.rows_like:
-        expected = conn.execute(count_sql(STAGING_SCHEMA, model.rows_like)).fetchone()[0]
+        schema = model.rows_like_schema
+        expected = conn.execute(count_sql(schema, model.rows_like)).fetchone()[0]
         if rows != expected:
+            errors.append(f"{relation} has {rows} rows, {schema}.{model.rows_like} has {expected}")
+
+    factors = mismatches = 0
+    if model.reconciles_trains:
+        factors, mismatches = conn.execute(
+            trains_check_sql(model.name, model.exact_trains)
+        ).fetchone()
+        if factors != len(WEATHER_FACTORS):
+            errors.append(f"{relation} covers {factors} weather factors, expected 3")
+        if mismatches:
+            bound = "differ from" if model.exact_trains else "exceed"
             errors.append(
-                f"{relation} has {rows} rows, {STAGING_SCHEMA}.{model.rows_like} has {expected}"
+                f"{mismatches} weather factor(s) whose trains_run {bound} "
+                f"the route-months with weather"
             )
 
     if rows == 0:
@@ -221,6 +294,8 @@ def verify_mart(conn: psycopg.Connection, model: MartModel) -> ModelReport:
         source_rows=expected,
         duplicate_keys=dupes,
         null_keys=nulls,
+        weather_factors=factors,
+        trains_mismatches=mismatches,
         errors=errors,
     )
 

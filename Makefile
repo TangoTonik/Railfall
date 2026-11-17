@@ -109,7 +109,7 @@ dbt-freshness: ## Check raw sources were loaded recently (warn > 7 days, error >
 verify-staging: ## Check staging views against raw: view, row counts, unique grain
 	$(PYTHON) -m railfall.transform.verify $(DBT_VERIFY_ARGS)
 
-verify-marts: ## Check the star schema: tables, unique grain, facts match staging rows
+verify-marts: ## Check the marts: tables, unique grain, facts match sources, trains reconcile
 	$(PYTHON) -m railfall.transform.verify --layer marts $(DBT_VERIFY_ARGS)
 
 logs: ## Follow service logs

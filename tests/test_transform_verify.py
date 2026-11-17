@@ -39,6 +39,8 @@ class FakeConn:
         rel = self.relations[name]
         if "having count(*) > 1" in text:
             return FakeCursor((rel.get("dupes", 0), rel.get("nulls", 0)))
+        if "weather_factor" in text:
+            return FakeCursor((rel.get("factors", 3), rel.get("trains_mismatches", 0)))
         return FakeCursor((rel["rows"],))
 
     def __enter__(self):
@@ -148,10 +150,18 @@ def healthy_marts(rows: int = 120) -> dict[str, dict]:
 
 
 def test_mart_models_match_the_dbt_project():
-    models = Path(__file__).resolve().parents[1] / "dbt" / "models" / "marts" / "core"
-    assert {p.stem for p in models.glob("*.sql")} == set(tv.MART_MODELS)
-    # Facts are pinned to the staging model that drives them.
-    assert all(m.rows_like in tv.STAGING_MODELS for m in tv.MART_MODELS.values() if m.rows_like)
+    # Every model under marts/ (star schema and weather impact) is verified.
+    models = Path(__file__).resolve().parents[1] / "dbt" / "models" / "marts"
+    assert {p.stem for p in models.rglob("*.sql")} == set(tv.MART_MODELS)
+    # Facts are pinned to the model that drives them, in the schema it lives in.
+    for m in tv.MART_MODELS.values():
+        if m.rows_like:
+            pool = tv.STAGING_MODELS if m.rows_like_schema == "staging" else tv.MART_MODELS
+            assert m.rows_like in pool, m.name
+    # Every mart_* reconciles trains with the route-months it was built from.
+    assert {n for n, m in tv.MART_MODELS.items() if m.reconciles_trains} == {
+        n for n in tv.MART_MODELS if n.startswith("mart_")
+    }
 
 
 def test_healthy_marts_pass():
@@ -196,3 +206,56 @@ def test_all_layer_checks_staging_then_marts(monkeypatch, capsys):
     assert tv.main(["--layer", "all", "--json"]) == 0
     models = [r["model"] for r in json.loads(capsys.readouterr().out)]
     assert models == [*tv.STAGING_MODELS, *tv.MART_MODELS]
+
+
+def test_route_month_weather_must_keep_every_fact_row():
+    rels = healthy_marts()
+    rels["marts.int_route_month_weather"]["rows"] = 121
+    [report] = tv.verify(FakeConn(rels), ["int_route_month_weather"], layer="marts")
+    assert report.errors == [
+        "marts.int_route_month_weather has 121 rows, marts.fact_route_month has 120"
+    ]
+
+
+def test_weather_mart_missing_a_factor_fails():
+    rels = healthy_marts()
+    rels["marts.mart_punctuality_by_weather"]["factors"] = 2
+    [report] = tv.verify(FakeConn(rels), ["mart_punctuality_by_weather"], layer="marts")
+    assert not report.ok and report.weather_factors == 2
+    assert report.errors == [
+        "marts.mart_punctuality_by_weather covers 2 weather factors, expected 3"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "word"),
+    [
+        ("mart_punctuality_by_weather", "differ from"),
+        ("mart_punctuality_by_region_season", "exceed"),
+        ("mart_punctuality_by_weather_intensity", "exceed"),
+    ],
+)
+def test_trains_mismatch_fails(model, word):
+    rels = healthy_marts()
+    rels[f"marts.{model}"]["trains_mismatches"] = 1
+    [report] = tv.verify(FakeConn(rels), [model], layer="marts")
+    assert not report.ok and report.trains_mismatches == 1
+    assert word in report.errors[0]
+
+
+def test_trains_check_sql_is_exact_only_for_the_binary_mart():
+    exact = tv.trains_check_sql("mart_punctuality_by_weather", exact=True).as_string(None)
+    bounded = tv.trains_check_sql("mart_punctuality_by_region_season", exact=False)
+    bounded = bounded.as_string(None)
+    assert "f.trains <>" in exact and "f.trains >" in bounded
+    for text in (exact, bounded):
+        assert '"marts"."int_route_month_weather"' in text
+        assert "weather_coverage <> 'none'" in text
+        # The mart is the first relation named, so it is what gets counted.
+        assert text.index('"marts"."mart_') < text.index('"marts"."int_route_month_weather"')
+
+
+def test_star_schema_checks_skip_the_trains_query():
+    conn = FakeConn(healthy_marts())
+    tv.verify(conn, ["dim_route", "fact_route_month"], layer="marts")
+    assert not any("weather_factor" in q for q in conn.queries)
