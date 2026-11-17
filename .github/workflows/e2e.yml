@@ -440,12 +440,13 @@ jobs:
           jq -e '
             .ok and (.errors | length == 0)
             and ([.nodes[] | select(.resource_type == "seed")] | length == 1)
-            and ([.nodes[] | select(.resource_type == "model")] | length == 8
+            and ([.nodes[] | select(.resource_type == "model")] | length == 9
                  and all(.status == "success"))
             and ([.nodes[] | select(.resource_type == "model") | .unique_id]
                  | index("model.railfall.int_route_month_weather") != null
                    and index("model.railfall.mart_punctuality_by_weather") != null
-                   and index("model.railfall.mart_punctuality_by_region_season") != null)
+                   and index("model.railfall.mart_punctuality_by_region_season") != null
+                   and index("model.railfall.mart_punctuality_by_weather_intensity") != null)
             and ([.nodes[] | select(.resource_type == "test")] | length >= 40
                  and all(.status == "pass"))' dbt-build-marts-1.json
 
