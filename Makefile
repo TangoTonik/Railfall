@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness verify-staging verify-marts logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -111,6 +111,9 @@ verify-staging: ## Check staging views against raw: view, row counts, unique gra
 
 verify-marts: ## Check the marts: tables, unique grain, facts match sources, trains reconcile
 	$(PYTHON) -m railfall.transform.verify --layer marts $(DBT_VERIFY_ARGS)
+
+weather-report: ## Print the weather-impact marts as Markdown, read as railfall_reader
+	$(PYTHON) -m railfall.transform.report $(REPORT_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f

@@ -45,6 +45,7 @@ def test_help_lists_documented_targets():
         "dbt-freshness",
         "verify-staging",
         "verify-marts",
+        "weather-report",
         "down",
     )
     for target in (*targets, "clean"):
@@ -172,3 +173,8 @@ def test_dag_run_triggers_the_ingest_dag_by_default():
 def test_verify_marts_checks_the_marts_layer():
     out = _make("-n", "verify-marts", "PYTHON=python", "DBT_VERIFY_ARGS=--json")
     assert "python -m railfall.transform.verify --layer marts --json" in out
+
+
+def test_weather_report_reads_the_marts_as_the_reader():
+    out = _make("-n", "weather-report", "PYTHON=python", "REPORT_ARGS=--out w.md")
+    assert out.strip() == "python -m railfall.transform.report --out w.md"
