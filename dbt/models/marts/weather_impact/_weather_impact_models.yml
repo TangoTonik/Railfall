@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: int_route_month_weather
+    description: >
+      fact_route_month with the weather of both endpoint departments that month,
+      combined into the worse of the two ends, and one `weather_condition` label
+      (frost > wind > rain > calm, `unknown` without weather at either end).
+    columns:
+      - name: route_month_id
+        data_tests: [not_null, unique]
+      - name: route_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_route')
+                field: route_id
+      - name: month
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_month')
+                field: month
+      - name: is_wet
+        data_tests: [not_null]
+      - name: is_frosty
+        data_tests: [not_null]
+      - name: is_windy
+        data_tests: [not_null]
+      - name: max_precipitation_ratio
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+      - name: weather_coverage
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["both", "departure_only", "arrival_only", "none"]
+      - name: weather_condition
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["frost", "wind", "rain", "calm", "unknown"]

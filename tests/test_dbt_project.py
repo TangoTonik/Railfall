@@ -308,3 +308,38 @@ def test_fact_weather_does_not_drop_rows_singular_test_exists():
     assert (
         DBT_DIR / "tests" / "marts" / "assert_fact_weather_keeps_every_staging_row.sql"
     ).exists()
+
+
+WEATHER_IMPACT_DIR = DBT_DIR / "models" / "marts" / "weather_impact"
+
+
+def _weather_impact_model(model: str) -> dict:
+    doc = yaml.safe_load(
+        (WEATHER_IMPACT_DIR / "_weather_impact_models.yml").read_text(encoding="utf-8")
+    )
+    (spec,) = [m for m in doc["models"] if m["name"] == model]
+    return spec
+
+
+def test_route_month_weather_keeps_the_fact_grain():
+    columns = {c["name"]: c for c in _weather_impact_model("int_route_month_weather")["columns"]}
+    assert {"not_null", "unique"} <= set(columns["route_month_id"]["data_tests"])
+    assert (
+        DBT_DIR / "tests" / "marts" / "assert_route_month_weather_keeps_every_fact_row.sql"
+    ).exists()
+
+
+def test_route_month_weather_conditions_match_the_sql():
+    sql = (WEATHER_IMPACT_DIR / "int_route_month_weather.sql").read_text(encoding="utf-8")
+    columns = {c["name"]: c for c in _weather_impact_model("int_route_month_weather")["columns"]}
+    for value in _accepted_values(columns["weather_condition"]):
+        assert f"then '{value}'" in sql or f"else '{value}'" in sql, value
+    for value in _accepted_values(columns["weather_coverage"]):
+        assert f"then '{value}'" in sql or f"else '{value}'" in sql, value
+
+
+def test_route_month_weather_left_joins_both_endpoints():
+    # An inner join would silently drop foreign / unplaced routes from the marts.
+    sql = (WEATHER_IMPACT_DIR / "int_route_month_weather.sql").read_text(encoding="utf-8")
+    assert sql.count("left join weather as") == 2
+    assert "inner join" not in sql
