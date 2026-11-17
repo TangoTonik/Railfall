@@ -61,6 +61,7 @@ make dbt-build DBT_ARGS="--select staging"  # build the staging views and run th
 make verify-staging # staging views vs raw: row counts, unique non-null grain
 make dbt-build DBT_ARGS="--select departments marts"  # seed + star schema and its tests
 make verify-marts   # marts: tables, unique grain, facts keep every row, trains reconcile
+make weather-report # the weather-impact marts as Markdown, read as railfall_reader
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
 make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
 make down     # stop (keeps data); `make clean` also deletes the volumes
@@ -217,6 +218,22 @@ grain instead of averaging averages. Singular tests assert each fact keeps every
 staging row through its dimension joins, and `make verify-marts` re-checks this
 from outside dbt. Selected `build`/`test` runs use `--indirect-selection
 buildable`, so `--select staging` never runs a marts test before the facts exist.
+
+#### Weather-impact marts (`marts`)
+
+| Model | Grain | Answers |
+|---|---|---|
+| `int_route_month_weather` | route × service × month | the weather at both ends, combined into the worse end; one `weather_condition` (frost > wind > rain > calm, `unknown`) |
+| `mart_punctuality_by_weather` | factor (rain / wind / frost) × exposure (adverse / normal) | how much worse are wet, windy or frosty months? (`punctuality_gap_pts`) |
+| `mart_punctuality_by_region_season` | region × season × factor × exposure | where and when does each factor hurt? (`has_comparison` marks readable gaps) |
+| `mart_punctuality_by_weather_intensity` | factor × intensity band | does it get worse the harder it rains / freezes / blows? (gap vs a baseline band) |
+
+Rates are always rebuilt from summed train counts through the
+`punctuality_rates()` macro, never averaged. Route-months without weather at
+either end stay in `int_route_month_weather` but are left out of the
+comparisons. `make weather-report` reads the three marts as `railfall_reader`
+(the dashboards' role) and prints headlines, the dose-response table and the
+worst region × season cells; e2e appends it to the job summary.
 
 ## How this project is built
 
