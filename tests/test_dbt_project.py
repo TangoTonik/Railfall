@@ -343,3 +343,22 @@ def test_route_month_weather_left_joins_both_endpoints():
     sql = (WEATHER_IMPACT_DIR / "int_route_month_weather.sql").read_text(encoding="utf-8")
     assert sql.count("left join weather as") == 2
     assert "inner join" not in sql
+
+
+def test_weather_mart_grain_is_factor_by_exposure():
+    spec = _weather_impact_model("mart_punctuality_by_weather")
+    keys = [
+        tuple(t["unique_combination_of_columns"]["arguments"]["columns"])
+        for t in spec.get("data_tests", [])
+        if isinstance(t, dict) and "unique_combination_of_columns" in t
+    ]
+    assert keys == [("weather_factor", "exposure")]
+    columns = {c["name"]: c for c in spec["columns"]}
+    assert _accepted_values(columns["weather_factor"]) == ["rain", "wind", "frost"]
+    assert _accepted_values(columns["exposure"]) == ["adverse", "normal"]
+
+
+def test_weather_mart_rebuilds_rates_from_counts():
+    sql = (WEATHER_IMPACT_DIR / "mart_punctuality_by_weather.sql").read_text(encoding="utf-8")
+    assert "avg(" not in sql, "rates must be recomputed from summed counts, not averaged"
+    assert "sum(trains_run)" in sql

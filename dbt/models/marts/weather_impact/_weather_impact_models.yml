@@ -46,3 +46,52 @@ models:
           - accepted_values:
               arguments:
                 values: ["frost", "wind", "rain", "calm", "unknown"]
+
+  - name: mart_punctuality_by_weather
+    description: >
+      Punctuality, cancellations and delay of route-months hit by rain, wind or
+      frost against the route-months that were not, rates rebuilt from counts.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [weather_factor, exposure]
+    columns:
+      - name: weather_exposure_id
+        data_tests: [not_null, unique]
+      - name: weather_factor
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["rain", "wind", "frost"]
+      - name: exposure
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["adverse", "normal"]
+      - name: route_months
+        data_tests:
+          - not_null
+          - accepted_range:
+              arguments:
+                min_value: 1
+      - name: arrival_punctuality_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: cancellation_rate
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: punctuality_gap_pts
+        description: Adverse minus normal arrival punctuality, in percentage points.
+        data_tests:
+          - accepted_range:
+              arguments:
+                min_value: -100
+                max_value: 100
