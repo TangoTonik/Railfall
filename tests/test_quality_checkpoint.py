@@ -135,3 +135,37 @@ def test_a_suite_can_validate_a_copy_under_another_table_name(tmp_path):
     assert {f.column for f in reports["stations"].failures} == {"department"}
     # The original table is untouched and still passes under the same suite.
     assert _run(url, tables=("stations",))["stations"].ok
+
+
+def test_markdown_summary_lists_tables_and_failures():
+    reports = [
+        checkpoint.TableReport("stations", ok=True, evaluated=7),
+        checkpoint.TableReport(
+            "weather_daily",
+            ok=False,
+            evaluated=9,
+            failures=[
+                checkpoint.Failure("expect_column_values_to_be_between", "rain_mm", 3),
+                checkpoint.Failure("expect_table_row_count_to_be_between", observed="a|b"),
+            ],
+        ),
+    ]
+    text = checkpoint.to_markdown(reports)
+    assert "checkpoint FAILED" in text.splitlines()[0]
+    assert "1/2 raw tables pass" in text
+    assert "| `stations` | ✅ ok | 7/7 |" in text
+    assert "| `weather_daily` | ❌ failed | 7/9 |" in text
+    assert "| `weather_daily` | `expect_column_values_to_be_between` | rain_mm | 3 |  |" in text
+    assert "a\\|b" in text
+
+
+def test_markdown_summary_has_no_failure_table_when_everything_passes():
+    text = checkpoint.to_markdown([checkpoint.TableReport("stations", ok=True, evaluated=7)])
+    assert "checkpoint passed" in text and "Failed expectations" not in text
+
+
+def test_main_writes_the_markdown_summary(tmp_path, capsys):
+    out = tmp_path / "quality.md"
+    code = checkpoint.main(["--url", _db(tmp_path), "--table", "stations", "--markdown", str(out)])
+    assert code == 0
+    assert "| `stations` | ✅ ok |" in out.read_text()

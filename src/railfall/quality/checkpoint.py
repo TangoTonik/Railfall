@@ -3,6 +3,7 @@
     python -m railfall.quality.checkpoint                    # every raw table
     python -m railfall.quality.checkpoint --table stations --json
     python -m railfall.quality.checkpoint --report quality.json
+    python -m railfall.quality.checkpoint --markdown quality.md   # for a CI job summary
 
 The context is ephemeral: suites live in `railfall.quality.suites` (versioned
 with the code), so there is no `gx/` directory to keep in sync and nothing to
@@ -175,6 +176,43 @@ def _format(table_reports: Sequence[TableReport]) -> str:
     return "\n".join(lines)
 
 
+def _cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ")
+
+
+def to_markdown(table_reports: Sequence[TableReport]) -> str:
+    """A Markdown summary: one row per table, then one row per failed expectation."""
+    passed = sum(r.ok for r in table_reports)
+    verdict = "passed" if passed == len(table_reports) else "FAILED"
+    lines = [
+        f"## Data quality: `{CHECKPOINT_NAME}` checkpoint {verdict}",
+        "",
+        f"{passed}/{len(table_reports)} raw tables pass every expectation.",
+        "",
+        "| table | status | expectations passed |",
+        "| --- | --- | ---: |",
+    ]
+    for r in table_reports:
+        status = "✅ ok" if r.ok else "❌ failed"
+        lines.append(f"| `{r.table}` | {status} | {r.evaluated - len(r.failures)}/{r.evaluated} |")
+    failures = [(r.table, f) for r in table_reports for f in r.failures]
+    if failures:
+        lines += [
+            "",
+            "### Failed expectations",
+            "",
+            "| table | expectation | column | unexpected | observed |",
+            "| --- | --- | --- | ---: | --- |",
+        ]
+        for table, f in failures:
+            lines.append(
+                f"| `{table}` | `{f.expectation}` | {_cell(f.column)} "
+                f"| {_cell(f.unexpected_count)} | {_cell(f.observed)} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from railfall.transform.verify import transformer_dsn
 
@@ -183,6 +221,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the reports as JSON")
     parser.add_argument(
         "--report", type=Path, default=None, help="also write the JSON reports to this file"
+    )
+    parser.add_argument(
+        "--markdown", type=Path, default=None, help="also write a Markdown summary to this file"
     )
     parser.add_argument("--url", default=None, help="SQLAlchemy URL (default: DBT_* role)")
     args = parser.parse_args(argv)
@@ -193,6 +234,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = json.dumps([asdict(r) for r in table_reports], indent=2, default=str)
     if args.report:
         args.report.write_text(payload + "\n")
+    if args.markdown:
+        args.markdown.write_text(to_markdown(table_reports))
     if args.json:
         print(payload)
     else:
