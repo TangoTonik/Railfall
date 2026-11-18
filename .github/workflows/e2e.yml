@@ -333,8 +333,9 @@ jobs:
             dag-pipeline.json
           jq -e '.state == "success"' dag-pipeline.json
           jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-pipeline.json
-          jq -e '[.tasks[].task_id] | unique == ["build_silver", "ingest_meteo", "ingest_sncf",
-            "load_warehouse", "verify_meteo", "verify_silver", "verify_sncf", "verify_warehouse"]' \
+          jq -e '[.tasks[].task_id] | unique == ["build_silver", "check_raw_quality",
+            "ingest_meteo", "ingest_sncf", "load_warehouse", "verify_meteo", "verify_silver",
+            "verify_sncf", "verify_warehouse"]' \
             dag-pipeline.json
           jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-pipeline.json
           # Spark ran in the Airflow worker over S3A: six valid silver tables, unique keys.
@@ -351,6 +352,13 @@ jobs:
               == ([r("build_silver")[] | {table, rows}] | sort_by(.table))
             and (r("verify_warehouse") | length == 6 and all(.ok and .rows == .silver_rows
               and .duplicate_keys == 0 and .null_keys == 0))' dag-pipeline.json
+          # The Great Expectations gate validated every raw suite, with nothing failing.
+          jq -e 'def r(id): [.tasks[] | select(.task_id == id) | .result[]];
+            r("check_raw_quality") as $q
+            | ([$q[].table] | sort) == ["punctuality_monthly", "route_departments",
+                "stations", "weather_daily", "weather_monthly"]
+              and ($q | all(.ok and .evaluated > 0 and (.failures | length == 0)))' \
+            dag-pipeline.json
           # Same bronze as the CLI steps -> same silver and a no-op merge. (If a
           # source republished in between, the counts above still had to agree.)
           jq -e --slurpfile silver silver-2.json --slurpfile wh verify-load-1.json '
