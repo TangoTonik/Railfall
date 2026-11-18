@@ -3,6 +3,10 @@ version: 2
 models:
   - name: dim_department
     description: French departments with their region and the warehouse's coverage of each.
+    data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
     columns:
       - name: department
         description: INSEE department code ("01", "2A", "974").
@@ -21,6 +25,10 @@ models:
 
   - name: dim_month
     description: Gap-free calendar of every month the facts cover, with meteorological seasons.
+    data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
     columns:
       - name: month
         description: First day of the month (the join key of every fact).
@@ -48,6 +56,10 @@ models:
     description: >
       TGV routes with the department and region of each endpoint. Driven by the
       punctuality facts, so every fact route has a row even when unplaced.
+    data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
     columns:
       - name: route_id
         data_tests: [not_null, unique]
@@ -88,6 +100,9 @@ models:
   - name: fact_route_month
     description: One row per TGV route, service and month, with AQST counts and rates.
     data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
       - unique_combination_of_columns:
           arguments:
             columns: [month, service, route_id]
@@ -138,6 +153,9 @@ models:
       shares of the month, anomalies against the department's own calendar-month
       climatology, and the wet / frosty / windy flags the marts group by.
     data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
       - unique_combination_of_columns:
           arguments:
             columns: [department, month]

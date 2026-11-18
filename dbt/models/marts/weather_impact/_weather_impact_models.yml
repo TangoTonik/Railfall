@@ -6,6 +6,10 @@ models:
       fact_route_month with the weather of both endpoint departments that month,
       combined into the worse of the two ends, and one `weather_condition` label
       (frost > wind > rain > calm, `unknown` without weather at either end).
+    data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
     columns:
       - name: route_month_id
         data_tests: [not_null, unique]
@@ -52,6 +56,9 @@ models:
       Punctuality, cancellations and delay of route-months hit by rain, wind or
       frost against the route-months that were not, rates rebuilt from counts.
     data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
       - unique_combination_of_columns:
           arguments:
             columns: [weather_factor, exposure]
@@ -103,6 +110,9 @@ models:
       pooled across years. Sparse cells keep their row with a null gap;
       `has_comparison` marks the region-season-factors with both exposures.
     data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
       - unique_combination_of_columns:
           arguments:
             columns: [region_code, season, weather_factor, exposure]
@@ -177,6 +187,9 @@ models:
       ratio of the monthly normal, frost days, strong-wind days. One baseline
       band per factor; the gap columns compare every other band with it.
     data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
       - unique_combination_of_columns:
           arguments:
             columns: [weather_factor, intensity_band]

@@ -3,6 +3,20 @@ version: 2
 models:
   - name: stg_sncf__punctuality_monthly
     description: TGV punctuality per route-month, typed for the star schema.
+    data_tests:
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
+      # Silver derives the rate from the counts (railfall.spark.punctuality);
+      # staging must pass it through unchanged, up to silver's 4-decimal rounding.
+      - expression_is_true:
+          arguments:
+            expression: "abs(arrival_punctuality_rate - (1 - trains_late_arrival::numeric / trains_run)) <= 0.0001"
+            where_clause: "trains_run > 0 and trains_late_arrival is not null"
+      - expression_is_true:
+          arguments:
+            expression: "trains_run = trains_planned - trains_cancelled"
+            where_clause: "trains_run is not null and trains_planned is not null"
     columns:
       - name: route_month_id
         description: Surrogate key md5(month | service | route_id).
@@ -119,6 +133,23 @@ models:
 
   - name: stg_meteo__weather_monthly
     description: Weather per department and month (coverage-aware Spark roll-up).
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            columns: [department, month]
+      - row_count_in_range:
+          arguments:
+            min_rows: 1
+      # Both day counts are scaled by the same rain observations and averaged over
+      # the same stations, so a heavy-rain day is always a rain day; 0.01 absorbs
+      # float rounding of the station means.
+      - expression_is_true:
+          arguments:
+            expression: "heavy_rain_days <= rain_days + 0.01"
+            where_clause: "heavy_rain_days is not null and rain_days is not null"
+      - expression_is_true:
+          arguments:
+            expression: "stations_rain <= stations and stations_temp <= stations and stations_wind <= stations"
     columns:
       - name: department_month_id
         description: Surrogate key md5(department | month).
@@ -166,10 +197,6 @@ models:
           - accepted_range:
               arguments:
                 min_value: 0
-    data_tests:
-      - unique_combination_of_columns:
-          arguments:
-            columns: [department, month]
 
   - name: stg_sncf__route_departments
     description: TGV route -> endpoint departments, with the match method per side.
