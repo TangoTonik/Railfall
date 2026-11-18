@@ -2,6 +2,7 @@
 
     python -m railfall.quality.checkpoint                    # every raw table
     python -m railfall.quality.checkpoint --table stations --json
+    python -m railfall.quality.checkpoint --report quality.json
 
 The context is ephemeral: suites live in `railfall.quality.suites` (versioned
 with the code), so there is no `gx/` directory to keep in sync and nothing to
@@ -22,6 +23,7 @@ import os
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from railfall.quality.suites import RAW_SCHEMA, SUITES, Expectation, suite_name
@@ -170,11 +172,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--table", action="append", choices=sorted(SUITES), dest="tables")
     parser.add_argument("--json", action="store_true", help="print the reports as JSON")
+    parser.add_argument(
+        "--report", type=Path, default=None, help="also write the JSON reports to this file"
+    )
+    parser.add_argument("--url", default=None, help="SQLAlchemy URL (default: DBT_* role)")
     args = parser.parse_args(argv)
 
-    table_reports = run(sqlalchemy_url(transformer_dsn()), args.tables)
+    url = args.url or sqlalchemy_url(transformer_dsn())
+    schema = None if url.startswith("sqlite") else RAW_SCHEMA
+    table_reports = run(url, args.tables, schema=schema)
+    payload = json.dumps([asdict(r) for r in table_reports], indent=2, default=str)
+    if args.report:
+        args.report.write_text(payload + "\n")
     if args.json:
-        print(json.dumps([asdict(r) for r in table_reports], indent=2, default=str))
+        print(payload)
     else:
         print(_format(table_reports))
     return 0 if all(r.ok for r in table_reports) else 1

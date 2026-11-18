@@ -7,6 +7,7 @@ is the code path the DAG runs against Postgres.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -32,6 +33,7 @@ WEATHER_MONTHLY = [
 
 def _db(tmp_path, stations=STATIONS, weather=WEATHER_MONTHLY) -> str:
     path = tmp_path / "warehouse.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
         conn.execute(
             "create table stations (uic_code text, station_name text, name_key text,"
@@ -130,3 +132,19 @@ def test_format_lists_failures_under_their_table():
     text = checkpoint._format([report])
     assert text.splitlines()[0].split() == ["stations", "FAILED", "6/7"]
     assert "expect_column_values_to_be_unique on uic_code: unexpected=2" in text
+
+
+def test_main_writes_the_report_and_exits_on_failures(tmp_path, capsys):
+    url = _db(tmp_path)
+    report = tmp_path / "quality.json"
+    code = checkpoint.main(["--url", url, "--table", "stations", "--report", str(report)])
+    assert code == 0
+    payload = json.loads(report.read_text())
+    assert [r["table"] for r in payload] == ["stations"]
+    assert payload[0]["ok"] and payload[0]["evaluated"] == len(SUITES["stations"])
+    assert capsys.readouterr().out.split()[:2] == ["stations", "ok"]
+
+    broken = _db(tmp_path / "broken", stations=[*STATIONS, STATIONS[0]])
+    assert checkpoint.main(["--url", broken, "--table", "stations", "--json"]) == 1
+    printed = json.loads(capsys.readouterr().out)
+    assert not printed[0]["ok"] and printed[0]["failures"]

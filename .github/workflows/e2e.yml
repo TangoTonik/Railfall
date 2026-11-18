@@ -37,8 +37,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install railfall (with Spark and dbt)
-        run: pip install -e ".[spark,dbt]"
+      - name: Install railfall (with Spark, dbt and Great Expectations)
+        run: pip install -e ".[spark,dbt,quality]"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -384,6 +384,18 @@ jobs:
               == ([$dag[0].tasks[] | select(.task_id == "verify_warehouse") | .result[]
                    | {table, rows}] | sort_by(.table))
             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-dag.json
+
+      - name: Great Expectations checkpoint agrees with the DAG's gate
+        # Same suites, run from the CLI as the transformer role outside Airflow:
+        # every raw table passes and the per-table results match the DAG's XCom.
+        run: |
+          make --no-print-directory quality QUALITY_ARGS="--report quality-1.json"
+          jq -e 'length == 5 and all(.ok and .evaluated > 0 and (.failures | length == 0))' \
+            quality-1.json
+          jq -e --slurpfile dag dag-pipeline.json '
+            ([.[] | {table, evaluated}] | sort_by(.table))
+              == ([$dag[0].tasks[] | select(.task_id == "check_raw_quality") | .result[]
+                   | {table, evaluated}] | sort_by(.table))' quality-1.json
 
       - name: dbt reaches the warehouse as the transformer role
         run: make --no-print-directory dbt-debug
