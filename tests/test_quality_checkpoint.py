@@ -148,3 +148,16 @@ def test_main_writes_the_report_and_exits_on_failures(tmp_path, capsys):
     assert checkpoint.main(["--url", broken, "--table", "stations", "--json"]) == 1
     printed = json.loads(capsys.readouterr().out)
     assert not printed[0]["ok"] and printed[0]["failures"]
+
+
+def test_a_suite_can_validate_a_copy_under_another_table_name(tmp_path):
+    url = _db(tmp_path)
+    path = url.removeprefix("sqlite:///")
+    with sqlite3.connect(path) as conn:
+        conn.execute("create table stations_copy as select * from stations")
+        conn.execute("update stations_copy set department = 'XX'")
+    reports = _run(url, tables=("stations",), table_names={"stations": "stations_copy"})
+    assert not reports["stations"].ok
+    assert {f.column for f in reports["stations"].failures} == {"department"}
+    # The original table is untouched and still passes under the same suite.
+    assert _run(url, tables=("stations",))["stations"].ok

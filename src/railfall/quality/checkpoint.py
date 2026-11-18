@@ -78,15 +78,21 @@ def build_checkpoint(
     *,
     schema: str | None = RAW_SCHEMA,
     suites: Mapping[str, Sequence[Expectation]] = SUITES,
+    table_names: Mapping[str, str] | None = None,
 ) -> Any:
-    """Register datasource, suites and validations for `tables`; return the checkpoint."""
+    """Register datasource, suites and validations for `tables`; return the checkpoint.
+
+    `table_names` maps a suite to the physical table it should validate (default:
+    the table of the same name), so a copy can be checked against the real suite.
+    """
     import great_expectations as gx
 
     source = _datasource(context, url)
     validations = []
     for table in tables:
         location = {"schema_name": schema} if schema else {}
-        asset = source.add_table_asset(name=table, table_name=table, **location)
+        physical = (table_names or {}).get(table, table)
+        asset = source.add_table_asset(name=table, table_name=physical, **location)
         batch = asset.add_batch_definition_whole_table(f"{table}_all")
         suite = context.suites.add(gx.ExpectationSuite(name=suite_name(table)))
         for spec in suites[table]:
@@ -139,6 +145,7 @@ def run(
     *,
     schema: str | None = RAW_SCHEMA,
     suites: Mapping[str, Sequence[Expectation]] = SUITES,
+    table_names: Mapping[str, str] | None = None,
 ) -> list[TableReport]:
     """Validate `tables` (default: every suite) at `url` in a fresh ephemeral context."""
     import great_expectations as gx
@@ -150,7 +157,9 @@ def run(
     # GX phones home by default; a local, offline pipeline has no use for it.
     os.environ.setdefault("GX_ANALYTICS_ENABLED", "False")
     context = gx.get_context(mode="ephemeral")
-    checkpoint = build_checkpoint(context, url, names, schema=schema, suites=suites)
+    checkpoint = build_checkpoint(
+        context, url, names, schema=schema, suites=suites, table_names=table_names
+    )
     return reports(checkpoint.run())
 
 
