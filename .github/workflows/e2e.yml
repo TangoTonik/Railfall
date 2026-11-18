@@ -389,13 +389,16 @@ jobs:
         # Same suites, run from the CLI as the transformer role outside Airflow:
         # every raw table passes and the per-table results match the DAG's XCom.
         run: |
-          make --no-print-directory quality QUALITY_ARGS="--report quality-1.json"
+          make --no-print-directory quality \
+            QUALITY_ARGS="--report quality-1.json --markdown quality-1.md"
           jq -e 'length == 5 and all(.ok and .evaluated > 0 and (.failures | length == 0))' \
             quality-1.json
           jq -e --slurpfile dag dag-pipeline.json '
             ([.[] | {table, evaluated}] | sort_by(.table))
               == ([$dag[0].tasks[] | select(.task_id == "check_raw_quality") | .result[]
                    | {table, evaluated}] | sort_by(.table))' quality-1.json
+          grep -q 'checkpoint passed' quality-1.md
+          cat quality-1.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: The quality gate fails on corrupted copies of the real tables
         # Canary: each raw table is copied (as the loader), one row of the copy
@@ -411,6 +414,18 @@ jobs:
           test "$leftovers" = 0
           make --no-print-directory quality QUALITY_ARGS="--report quality-2.json"
           jq -e --slurpfile before quality-1.json '. == $before[0]' quality-2.json
+
+      - name: Upload the data-quality reports
+        # Checkpoint results and the canary's verdicts, kept with the run.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-quality-reports
+          path: |
+            quality-*.json
+            quality-*.md
+            canary.json
+          if-no-files-found: ignore
 
       - name: dbt reaches the warehouse as the transformer role
         run: make --no-print-directory dbt-debug

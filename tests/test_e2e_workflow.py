@@ -293,3 +293,18 @@ def test_weather_report_reads_the_rebuilt_marts_as_the_reader(steps):
     assert ".headlines | length == 3" in runs[report], "a headline per factor"
     assert "select(.is_baseline)" in runs[report], "every factor has its baseline band"
     assert "GITHUB_STEP_SUMMARY" in runs[report]
+
+
+def test_quality_results_reach_the_summary_and_are_kept_as_an_artifact(steps):
+    runs = [s.get("run", "") for s in steps]
+    gate = _index(steps, "--markdown quality-1.md")
+    assert "GITHUB_STEP_SUMMARY" in runs[gate]
+    upload = next(
+        s
+        for s in steps
+        if s.get("uses", "").startswith("actions/upload-artifact@")
+        and s["with"]["name"] == "data-quality-reports"
+    )
+    assert upload.get("if") == "always()", "reports are kept even when the gate fails"
+    assert "canary.json" in upload["with"]["path"]
+    assert steps.index(upload) > _index(steps, "make --no-print-directory quality-canary")
