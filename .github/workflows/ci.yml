@@ -13,6 +13,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # Pin the JVM: the runner image's default JDK removed Subject.getSubject,
+      # which Hadoop (inside PySpark 4.0) still calls when a SparkContext starts.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
