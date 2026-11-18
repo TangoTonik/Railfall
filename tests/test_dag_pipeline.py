@@ -36,6 +36,7 @@ def test_dag_tasks_only_call_existing_orchestration_functions() -> None:
         "verify_silver",
         "load_warehouse",
         "verify_warehouse",
+        "check_quality",
     }
     for name in _called("ingest"):
         assert callable(getattr(ingest, name))
@@ -68,7 +69,8 @@ def test_dag_shape(dag) -> None:
         "build_silver": ["verify_silver"],
         "verify_silver": ["load_warehouse"],
         "load_warehouse": ["verify_warehouse"],
-        "verify_warehouse": [],
+        "verify_warehouse": ["check_raw_quality"],
+        "check_raw_quality": [],
     }
 
 
@@ -90,3 +92,9 @@ def test_schedule_and_safety_settings(dag) -> None:
     assert dag.params.dump() == {"ingest_date": None}
     for task in dag.tasks:
         assert task.retries == 2
+
+
+def test_quality_gate_runs_last_with_the_default_timeout(dag) -> None:
+    gate = dag.get_task("check_raw_quality")
+    assert gate.upstream_task_ids == {"verify_warehouse"}
+    assert gate.execution_timeout == timedelta(minutes=30)

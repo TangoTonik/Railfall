@@ -48,6 +48,10 @@ x-airflow-common: &airflow-common
     LAKE_SECRET_KEY: ${LAKE_SECRET_KEY:-railfall-pipeline-secret}
     WAREHOUSE_DSN: postgresql://railfall_loader:${TF_VAR_warehouse_loader_password:-loader-local}@postgres:5432/${POSTGRES_DB:-warehouse}
     METEO_DEPARTMENTS: ${METEO_DEPARTMENTS:-75,69,13}
+    # The quality gate reads `raw` as the dbt role (read-only there).
+    DBT_HOST: postgres
+    DBT_PORT: "5432"
+    DBT_PASSWORD: ${TF_VAR_warehouse_transformer_password:-transformer-local}
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - airflow_logs:/opt/airflow/logs

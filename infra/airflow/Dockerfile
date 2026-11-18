@@ -1,5 +1,7 @@
 # Airflow image for the Railfall DAGs: the official image plus the railfall
 # package, so tasks call the same tested code as `make ingest-*` / `make silver`.
+# The `quality` extra (Great Expectations) is resolved under Airflow's constraints
+# too: it shares SQLAlchemy, pandas and pydantic with Airflow itself.
 #
 # The Spark tasks run PySpark in local mode inside the worker, so the image
 # also carries a Java 17 runtime (Spark 4.0 needs 17+).
@@ -30,8 +32,8 @@ COPY --chown=airflow:root src /opt/railfall/src
 RUN pip install --no-cache-dir \
       --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt" \
       "apache-airflow==${AIRFLOW_VERSION}" \
-      /opt/railfall \
- && python -c "import railfall.ingest.run"
+      "/opt/railfall[quality]" \
+ && python -c "import railfall.ingest.run, great_expectations"
 
 # Airflow's constraints pin pyspark 3.5 (for its Spark provider, unused here);
 # railfall's transforms target Spark 4.0, so the spark extra is installed in a
