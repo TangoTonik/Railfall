@@ -201,3 +201,34 @@ def verify_warehouse(
         "verify warehouse", [f"{r.table}: {'; '.join(r.errors)}" for r in reports if not r.ok]
     )
     return [asdict(r) for r in reports]
+
+
+def check_quality(
+    *,
+    tables: Iterable[str] | None = None,
+    url: str | None = None,
+    schema: str | None = "raw",
+) -> Summary:
+    """Run the Great Expectations checkpoint over `raw.*` (the DAG's quality gate).
+
+    Connects as the read-only transformer role (`DBT_*` variables, like dbt
+    itself) unless a SQLAlchemy `url` is injected. Every table is validated
+    before the task fails, so one run lists every broken expectation.
+    """
+    from railfall.quality import checkpoint
+    from railfall.transform.verify import transformer_dsn
+
+    url = url or checkpoint.sqlalchemy_url(transformer_dsn())
+    reports = checkpoint.run(url, tables, schema=schema)
+    _raise_on_failures(
+        "check quality",
+        [
+            f"{r.table}: "
+            + ", ".join(
+                f"{f.expectation}" + (f"({f.column})" if f.column else "") for f in r.failures
+            )
+            for r in reports
+            if not r.ok
+        ],
+    )
+    return [asdict(r) for r in reports]
