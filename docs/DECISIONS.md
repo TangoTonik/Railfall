@@ -513,3 +513,47 @@ covers the three factors and that trains reconcile with the route-months that
 had weather. e2e then runs `railfall.transform.report` as `railfall_reader` on
 the real marts: it must find every factor and baseline band, and publishes its
 Markdown to the job summary, so the findings are visible on each run.
+
+## Day 14 — Data quality: dbt tests + Great Expectations checkpoint
+
+**Each tool guards the layer it can see.** dbt tests stay on the models dbt
+builds (staging, marts); Great Expectations validates `raw.*`, the layer dbt
+reads but does not build, right after the Spark load. Running GX over the marts
+too would duplicate dbt's tests in a second syntax; running dbt tests on raw
+would only happen once dbt had already started. The checkpoint is the last task
+of `railfall_pipeline`, so a broken load stops the run before any model reads it.
+
+**Suites as code, context ephemeral.** Expectations are declared as plain
+dataclasses in `railfall.quality.suites` and turned into a GX checkpoint at run
+time. There is no `gx/` project directory to initialise in the Airflow image or
+keep in sync with the code, the spec is unit-tested (every column exists in the
+silver contract, every kind exists in GX) without building a context, and it
+reads like a data contract in review.
+
+**Physical bounds, not statistical ones.** Ranges come from the Spark cleaner's
+`BOUNDS` and from definitions (a month has at most 31 days, trains run never
+exceed trains planned). An unusually wet month is what the project studies, so
+a z-score expectation would flag the signal as noise.
+
+**Read-only gate.** The checkpoint connects as `railfall_transformer`, which can
+select from `raw` but not write to it. A quality task should not be able to
+"fix" or damage what it judges.
+
+**dbt tests stay dependency-free.** `expression_is_true` and
+`row_count_in_range` are local generic tests, like `accepted_range` before them,
+instead of adding `dbt_utils`: no `dbt deps` network fetch inside the Airflow
+image or e2e, and the four macros are short enough to own. Every model now
+fails the build when empty, which is the failure mode a partial ingest
+actually produces.
+
+**A canary proves the gate bites.** A checkpoint that has only ever passed
+could be pointing at the wrong column. `railfall.quality.canary` copies each
+real raw table as the loader, plants one defect per table, runs the real suite
+on the copy and requires a failure on the targeted expectation; copies are
+dropped in a `finally`. The corruptions are portable SQL so the same flow is
+unit-tested on SQLite. In e2e it runs on the real data, and the gate must report
+exactly the same before and after, proving the canary left `raw` untouched.
+
+**Results are visible, not just green.** The checkpoint renders a Markdown
+table per run; e2e appends it to the job summary and keeps the JSON report as
+an artifact, so a reviewer sees what was checked without reading logs.
