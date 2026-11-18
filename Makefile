@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness quality verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness quality quality-canary verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -108,6 +108,9 @@ dbt-freshness: ## Check raw sources were loaded recently (warn > 7 days, error >
 
 quality: ## Validate raw tables with the Great Expectations suites (QUALITY_ARGS=--report q.json)
 	$(PYTHON) -m railfall.quality.checkpoint $(QUALITY_ARGS)
+
+quality-canary: ## Prove the gate fails on corrupted copies of the raw tables (copies are dropped)
+	$(PYTHON) -m railfall.quality.canary $(QUALITY_ARGS)
 
 verify-staging: ## Check staging views against raw: view, row counts, unique grain
 	$(PYTHON) -m railfall.transform.verify $(DBT_VERIFY_ARGS)
