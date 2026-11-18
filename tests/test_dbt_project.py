@@ -111,7 +111,12 @@ def test_only_aqst_cause_shares_may_warn():
 
 def test_local_generic_tests_cover_what_the_project_uses():
     generic = {p.stem for p in (DBT_DIR / "tests" / "generic").glob("*.sql")}
-    assert {"accepted_range", "unique_combination_of_columns"} <= generic
+    assert {
+        "accepted_range",
+        "unique_combination_of_columns",
+        "expression_is_true",
+        "row_count_in_range",
+    } <= generic
 
 
 def test_profile_reads_credentials_from_the_environment():
@@ -485,3 +490,60 @@ def test_intensity_mart_shares_rates_and_reconciles():
     assert (
         DBT_DIR / "tests" / "marts" / "assert_intensity_bands_cover_every_route_month.sql"
     ).exists()
+
+
+def _all_models() -> dict[str, dict]:
+    models: dict[str, dict] = {}
+    for path in (DBT_DIR / "models").rglob("*.yml"):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for model in doc.get("models", []):
+            models[model["name"]] = model
+    return models
+
+
+def _model_test_names(model: dict) -> list[str]:
+    names = []
+    for test in model.get("data_tests", []):
+        names.append(test if isinstance(test, str) else next(iter(test)))
+    return names
+
+
+def test_every_mart_is_checked_for_emptiness():
+    # A model that builds empty passes every column test vacuously; each mart and
+    # the staging tables they rest on must fail the build instead.
+    sql_models = {p.stem for p in (DBT_DIR / "models" / "marts").rglob("*.sql")}
+    models = _all_models()
+    for name in sorted(sql_models) + [
+        "stg_sncf__punctuality_monthly",
+        "stg_meteo__weather_monthly",
+    ]:
+        assert "row_count_in_range" in _model_test_names(models[name]), name
+
+
+def _expressions(model: str) -> list[str]:
+    return [
+        test["expression_is_true"]["arguments"]["expression"]
+        for test in _all_models()[model].get("data_tests", [])
+        if isinstance(test, dict) and "expression_is_true" in test
+    ]
+
+
+def test_staging_punctuality_rechecks_the_silver_derivations():
+    expressions = " ".join(_expressions("stg_sncf__punctuality_monthly"))
+    assert "trains_run = trains_planned - trains_cancelled" in expressions
+    assert "arrival_punctuality_rate" in expressions
+
+
+def test_staging_weather_monthly_checks_day_and_station_counts():
+    expressions = " ".join(_expressions("stg_meteo__weather_monthly"))
+    assert "heavy_rain_days <= rain_days" in expressions
+    for family in ("rain", "temp", "wind"):
+        assert f"stations_{family} <= stations" in expressions
+
+
+def test_dim_month_gap_free_singular_test_exists():
+    sql = (DBT_DIR / "tests" / "marts" / "assert_dim_month_is_gap_free.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "ref('dim_month')" in sql
+    assert "interval '1 month'" in sql
