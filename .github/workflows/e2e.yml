@@ -397,6 +397,21 @@ jobs:
               == ([$dag[0].tasks[] | select(.task_id == "check_raw_quality") | .result[]
                    | {table, evaluated}] | sort_by(.table))' quality-1.json
 
+      - name: The quality gate fails on corrupted copies of the real tables
+        # Canary: each raw table is copied (as the loader), one row of the copy
+        # is corrupted, and the real suite must fail on the targeted expectation.
+        # The copies are dropped and the real tables still pass afterwards.
+        run: |
+          make --no-print-directory quality-canary QUALITY_ARGS="--report canary.json"
+          jq -e 'length == 5 and all(.caught)' canary.json
+          jq -e '[.[].table] | sort == ["punctuality_monthly", "route_departments",
+            "stations", "weather_daily", "weather_monthly"]' canary.json
+          leftovers=$(docker compose exec -T postgres psql -U rail -d warehouse -Atc \
+            "select count(*) from pg_tables where schemaname = 'raw' and tablename like '\_canary\_%'")
+          test "$leftovers" = 0
+          make --no-print-directory quality QUALITY_ARGS="--report quality-2.json"
+          jq -e --slurpfile before quality-1.json '. == $before[0]' quality-2.json
+
       - name: dbt reaches the warehouse as the transformer role
         run: make --no-print-directory dbt-debug
 
