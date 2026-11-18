@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 11 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 14 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -22,6 +22,7 @@
 | Warehouse | PostgreSQL | Standard SQL, easy to run anywhere |
 | Modeling | dbt | Versioned, tested SQL transformations |
 | Orchestration | Airflow | Industry standard scheduler |
+| Data quality | dbt tests, Great Expectations | dbt guards the models it builds, GX the raw load underneath |
 | Infra | Docker Compose, Terraform | Reproducible, infrastructure as code |
 | CI | GitHub Actions | Lint + tests on every push |
 
@@ -164,7 +165,7 @@ the same code as the `make` targets, Spark included (local mode in the worker).
 | DAG | Schedule | Tasks |
 |---|---|---|
 | `railfall_ingest` | daily 05:15 UTC | `ingest_sncf → verify_sncf`; `ingest_meteo[dept]` (mapped over `METEO_DEPARTMENTS`) `→ verify_meteo` |
-| `railfall_pipeline` | daily 05:15 UTC | the ingestion above, then (once both bronze checks pass) `build_silver → verify_silver → load_warehouse → verify_warehouse` |
+| `railfall_pipeline` | daily 05:15 UTC | the ingestion above, then (once both bronze checks pass) `build_silver → verify_silver → load_warehouse → verify_warehouse → check_raw_quality` |
 
 Each task returns a JSON summary per dataset as its XCom and fails only after
 trying every dataset; retries are safe because bronze landing is idempotent.
@@ -234,6 +235,28 @@ either end stay in `int_route_month_weather` but are left out of the
 comparisons. `make weather-report` reads the three marts as `railfall_reader`
 (the dashboards' role) and prints headlines, the dose-response table and the
 worst region × season cells; e2e appends it to the job summary.
+
+### Data quality
+
+Two gates, one per layer, so each check runs where the data it guards is built:
+
+| Gate | Guards | Runs | Catches |
+|---|---|---|---|
+| Great Expectations checkpoint `railfall_raw` | `raw.*` (the Spark load) | `check_raw_quality`, last task of `railfall_pipeline`; `make quality` | value ranges, INSEE / UIC code formats, counters that must reconcile (`trains_run ≤ trains_planned`, `heavy_rain_days ≤ rain_days`), unique keys, empty tables |
+| dbt tests | `staging` and `marts` | `make dbt-build` | grain uniqueness, FKs, accepted values / ranges, row preservation through joins, non-empty models (`row_count_in_range`), cross-column invariants (`expression_is_true`), gap-free `dim_month` |
+
+The suites are plain data in `railfall.quality.suites`, versioned with the code;
+the checkpoint builds an ephemeral GX context at each run (no `gx/` directory)
+and connects as the read-only transformer role, so a gate can never alter what
+it inspects. Bounds are physical, not statistical: a 60 °C day is a bug, a very
+wet month is the point of the project.
+
+A gate that only ever passes proves little, so `make quality-canary` copies
+each real raw table, plants one known defect in one row (a 99 °C minimum, a
+department `XX`, a route mapped twice…), runs the real suite on the copy and
+requires it to fail on the targeted expectation; the copies are always dropped.
+e2e runs the gate inside the DAG, again from the CLI, then the canary, and
+publishes the per-table results to the job summary (`quality.md`).
 
 ## How this project is built
 
