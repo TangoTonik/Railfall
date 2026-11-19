@@ -539,6 +539,50 @@ jobs:
             and (.intensity | all(.route_months > 0))' weather-report.json
           cat weather-report.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: dbt docs generate on the live warehouse
+        # The catalog is introspected from Postgres as the transformer role: a
+        # relation dbt cannot read is a catalog error and fails the step.
+        run: |
+          make --no-print-directory dbt-docs DBT_ARGS="--report dbt-docs.json"
+          jq -e '.ok and (.errors | length == 0)' dbt-docs.json
+          for f in manifest.json catalog.json index.html static_index.html; do
+            test -s "dbt/target/$f" || { echo "missing dbt/target/$f"; exit 1; }
+          done
+
+      - name: Lineage, doc coverage and schema drift (strict)
+        # Every declared relation and column is described, everything dbt
+        # declares exists in the warehouse with the declared columns.
+        run: |
+          make -s dbt-docs-bundle \
+            DOCS_ARGS="--strict --out-dir dbt-docs-bundle" | tee dbt-docs-bundle.json
+          jq -e '.ok and .relations >= 21 and .edges >= 24
+            and .coverage.pct_columns_documented == 100
+            and .drift.ok and (.drift.missing_relations | length == 0)
+            and (.drift.missing_columns | length == 0)' dbt-docs-bundle.json
+          jq -e '[.nodes[] | select(.layer == "marts")] | length >= 9' \
+            dbt-docs-bundle/lineage.json
+          for m in fact_route_month mart_punctuality_by_weather \
+                   mart_punctuality_by_region_season mart_punctuality_by_weather_intensity; do
+            grep -q "$m" dbt-docs-bundle/catalog.md || { echo "$m not in catalog.md"; exit 1; }
+          done
+          cp dbt/target/{static_index.html,index.html,manifest.json,catalog.json} dbt-docs-bundle/
+          {
+            echo "## dbt lineage"
+            echo '```mermaid'
+            cat dbt-docs-bundle/lineage.mmd
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish dbt docs + lineage
+        # static_index.html opens from disk; the rest is the machine-readable
+        # lineage / coverage / drift and the Markdown catalog.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs
+          path: dbt-docs-bundle/
+          if-no-files-found: ignore
+
       - name: Re-apply is a no-op
         run: |
           make infra
