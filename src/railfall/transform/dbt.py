@@ -148,6 +148,10 @@ def dbt_args(
         args += ["--exclude", *exclude]
     if command in TESTING_COMMANDS and (select or exclude):
         args += ["--indirect-selection", indirect_selection or DEFAULT_INDIRECT_SELECTION]
+    if command == "docs generate":
+        # index.html fetches manifest/catalog over HTTP; static_index.html embeds
+        # them, so the copy in the CI artifact opens straight from disk.
+        args.append("--static")
     return args
 
 

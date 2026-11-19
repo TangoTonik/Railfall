@@ -124,6 +124,11 @@ def test_docs_generate_is_a_supported_command():
     assert tdbt.dbt_args("docs generate")[:2] == ["docs", "generate"]
 
 
+def test_docs_generate_also_writes_the_static_site():
+    assert tdbt.dbt_args("docs generate")[-1] == "--static"
+    assert "--static" not in tdbt.dbt_args("build")
+
+
 def test_docs_generate_fails_on_catalog_errors():
     def invoke(args):  # `dbt docs generate` returns a CatalogArtifact
         catalog = SimpleNamespace(nodes={}, sources={}, errors=["relation marts.x not found"])
