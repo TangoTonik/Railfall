@@ -1,0 +1,121 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.12.7",
+    "project_name": "railfall"
+  },
+  "nodes": {
+    "seed.railfall.departments": {
+      "unique_id": "seed.railfall.departments",
+      "name": "departments",
+      "resource_type": "seed",
+      "package_name": "railfall",
+      "schema": "staging",
+      "alias": "departments",
+      "fqn": ["railfall", "departments"],
+      "config": {"materialized": "seed"},
+      "description": "French departments and their region.",
+      "columns": {
+        "department": {"name": "department", "description": "INSEE department code."},
+        "region_code": {"name": "region_code", "description": ""}
+      },
+      "depends_on": {"macros": []}
+    },
+    "model.railfall.stg_sncf__punctuality_monthly": {
+      "unique_id": "model.railfall.stg_sncf__punctuality_monthly",
+      "name": "stg_sncf__punctuality_monthly",
+      "resource_type": "model",
+      "package_name": "railfall",
+      "schema": "staging",
+      "alias": "stg_sncf__punctuality_monthly",
+      "fqn": ["railfall", "staging", "stg_sncf__punctuality_monthly"],
+      "config": {"materialized": "view"},
+      "description": "TGV punctuality per route-month.",
+      "columns": {
+        "route_month_id": {"name": "route_month_id", "description": "Grain."},
+        "trains_run": {"name": "trains_run", "description": "Trains that ran."}
+      },
+      "depends_on": {"nodes": ["source.railfall.raw.punctuality_monthly"], "macros": []}
+    },
+    "model.railfall.dim_route": {
+      "unique_id": "model.railfall.dim_route",
+      "name": "dim_route",
+      "resource_type": "model",
+      "package_name": "railfall",
+      "schema": "marts",
+      "alias": "dim_route",
+      "fqn": ["railfall", "marts", "core", "dim_route"],
+      "config": {"materialized": "table"},
+      "description": "",
+      "columns": {
+        "route_id": {"name": "route_id", "description": ""}
+      },
+      "depends_on": {
+        "nodes": ["model.railfall.stg_sncf__punctuality_monthly", "seed.railfall.departments"],
+        "macros": []
+      }
+    },
+    "model.railfall.fact_route_month": {
+      "unique_id": "model.railfall.fact_route_month",
+      "name": "fact_route_month",
+      "resource_type": "model",
+      "package_name": "railfall",
+      "schema": "marts",
+      "alias": "fact_route_month",
+      "fqn": ["railfall", "marts", "core", "fact_route_month"],
+      "config": {"materialized": "table"},
+      "description": "One row per route and month.",
+      "columns": {},
+      "depends_on": {
+        "nodes": ["model.railfall.stg_sncf__punctuality_monthly", "model.railfall.dim_route"],
+        "macros": []
+      }
+    },
+    "test.railfall.unique_dim_route_route_id.abc123": {
+      "unique_id": "test.railfall.unique_dim_route_route_id.abc123",
+      "name": "unique_dim_route_route_id",
+      "resource_type": "test",
+      "package_name": "railfall",
+      "schema": "staging_dbt_test__audit",
+      "fqn": ["railfall", "marts", "core", "unique_dim_route_route_id"],
+      "config": {"materialized": "test"},
+      "description": "",
+      "columns": {},
+      "attached_node": "model.railfall.dim_route",
+      "column_name": "route_id",
+      "test_metadata": {"name": "unique", "kwargs": {"column_name": "route_id"}},
+      "depends_on": {"nodes": ["model.railfall.dim_route"], "macros": []}
+    },
+    "model.other_pkg.helper": {
+      "unique_id": "model.other_pkg.helper",
+      "name": "helper",
+      "resource_type": "model",
+      "package_name": "other_pkg",
+      "schema": "staging",
+      "alias": "helper",
+      "fqn": ["other_pkg", "helper"],
+      "config": {"materialized": "view"},
+      "description": "",
+      "columns": {},
+      "depends_on": {"nodes": [], "macros": []}
+    }
+  },
+  "sources": {
+    "source.railfall.raw.punctuality_monthly": {
+      "unique_id": "source.railfall.raw.punctuality_monthly",
+      "name": "punctuality_monthly",
+      "source_name": "raw",
+      "resource_type": "source",
+      "package_name": "railfall",
+      "schema": "raw",
+      "identifier": "punctuality_monthly",
+      "fqn": ["railfall", "staging", "raw", "punctuality_monthly"],
+      "config": {"enabled": true},
+      "description": "SNCF monthly TGV punctuality per route.",
+      "columns": {
+        "route_month_id": {"name": "route_month_id", "description": "Natural key."}
+      }
+    }
+  },
+  "exposures": {}
+}
