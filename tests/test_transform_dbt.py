@@ -120,6 +120,27 @@ def test_multi_word_command_is_split():
     assert args[:2] == ["source", "freshness"]
 
 
+def test_docs_generate_is_a_supported_command():
+    assert tdbt.dbt_args("docs generate")[:2] == ["docs", "generate"]
+
+
+def test_docs_generate_fails_on_catalog_errors():
+    def invoke(args):  # `dbt docs generate` returns a CatalogArtifact
+        catalog = SimpleNamespace(nodes={}, sources={}, errors=["relation marts.x not found"])
+        return SimpleNamespace(success=True, result=catalog, exception=None)
+
+    report = tdbt.run_dbt("docs generate", invoke=invoke)
+    assert not report.ok
+    assert report.errors == ["catalog: relation marts.x not found"]
+
+    def clean(args):
+        return SimpleNamespace(
+            success=True, result=SimpleNamespace(nodes={}, errors=None), exception=None
+        )
+
+    assert tdbt.run_dbt("docs generate", invoke=clean).ok
+
+
 def test_unknown_command_is_rejected():
     with pytest.raises(ValueError, match="unsupported dbt command"):
         tdbt.dbt_args("seed --full-refresh")

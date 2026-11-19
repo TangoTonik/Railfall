@@ -22,7 +22,16 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[3] / "dbt"
-COMMANDS = ("build", "run", "test", "parse", "debug", "compile", "source freshness")
+COMMANDS = (
+    "build",
+    "run",
+    "test",
+    "parse",
+    "debug",
+    "compile",
+    "source freshness",
+    "docs generate",
+)
 
 # Commands whose tests are picked up indirectly from the node selection.
 TESTING_COMMANDS = frozenset({"build", "test"})
@@ -169,7 +178,14 @@ def run_dbt(
     result = getattr(res, "result", None)
     # `debug` and `parse` return a bool / manifest instead of a results list.
     results = getattr(result, "results", None)
-    return report_from(command, res.success, results, res.exception)
+    report = report_from(command, res.success, results, res.exception)
+    # `docs generate` returns the catalog, which lists the relations it could
+    # not introspect instead of failing the command.
+    catalog_errors = getattr(result, "errors", None)
+    if command == "docs generate" and catalog_errors:
+        report.errors += [f"catalog: {e}" for e in catalog_errors]
+        report.ok = False
+    return report
 
 
 def _format(report: DbtReport) -> str:
