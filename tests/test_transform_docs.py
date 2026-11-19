@@ -116,6 +116,71 @@ def test_empty_manifest_is_fully_documented():
     assert cov.ok and cov.pct_columns_documented == 100.0
 
 
+@pytest.fixture
+def catalog():
+    return docs.load_json(FIXTURES / "catalog.json")
+
+
+def test_data_catalog_is_ordered_upstream_first(manifest, catalog):
+    entries = docs.data_catalog(manifest, catalog)
+    assert [e.layer for e in entries] == ["raw", "seeds", "staging", "marts", "marts"]
+    assert entries[0].relation == "raw.punctuality_monthly"
+
+
+def test_data_catalog_joins_warehouse_types_and_declared_descriptions(manifest, catalog):
+    stg = {e.name: e for e in docs.data_catalog(manifest, catalog)}["stg_sncf__punctuality_monthly"]
+    assert stg.kind == "view" and stg.in_warehouse
+    assert stg.upstream == ("punctuality_monthly",)
+    cols = {c.name: c for c in stg.columns}
+    assert [c.name for c in stg.columns] == ["route_month_id", "trains_run", "loaded_at"]
+    assert cols["trains_run"].type == "integer"
+    assert cols["trains_run"].description == "Trains that ran."
+    assert cols["loaded_at"].in_warehouse and not cols["loaded_at"].declared
+
+
+def test_relation_missing_from_warehouse_falls_back_to_materialization(manifest, catalog):
+    fact = {e.name: e for e in docs.data_catalog(manifest, catalog)}["fact_route_month"]
+    assert not fact.in_warehouse
+    assert fact.kind == "table"
+
+
+def test_data_catalog_without_catalog_json_marks_everything_missing(manifest):
+    entries = docs.data_catalog(manifest)
+    assert not any(e.in_warehouse for e in entries)
+    assert docs.schema_drift(entries).missing_relations == [e.unique_id for e in entries]
+
+
+def test_schema_drift(manifest, catalog):
+    drift = docs.schema_drift(docs.data_catalog(manifest, catalog))
+    assert drift.missing_relations == ["model.railfall.fact_route_month"]
+    assert drift.missing_columns == []
+    assert drift.undeclared_columns == [
+        "source.railfall.raw.punctuality_monthly.year",
+        "model.railfall.stg_sncf__punctuality_monthly.loaded_at",
+    ]
+    assert not drift.ok and drift.to_dict()["ok"] is False
+
+
+def test_declared_column_absent_from_warehouse_is_drift(manifest, catalog):
+    del catalog["nodes"]["model.railfall.dim_route"]["columns"]["route_id"]
+    drift = docs.schema_drift(docs.data_catalog(manifest, catalog))
+    assert drift.missing_columns == ["model.railfall.dim_route.route_id"]
+
+
+def test_catalog_markdown(manifest, catalog):
+    md = docs.catalog_markdown(docs.data_catalog(manifest, catalog))
+    assert md.startswith("# Data catalog\n")
+    assert "| raw | [`raw.punctuality_monthly`](#rawpunctuality_monthly) | table |" in md
+    assert "## staging.stg_sncf__punctuality_monthly" in md
+    assert "| `trains_run` | integer | Trains that ran. |" in md
+    assert "> Not found in the warehouse" in md  # fact_route_month
+    assert md.count("\n## ") == 5
+
+
+def test_markdown_cells_escape_pipes():
+    assert docs._cell("a | b\nc") == "a \\| b c"
+
+
 # --- the real project ---------------------------------------------------------
 
 needs_dbt = pytest.mark.skipif(

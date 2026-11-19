@@ -12,12 +12,15 @@ runs the same on a laptop and in CI.
   layer, so it can sit in the README and in the CI job summary.
 * `doc_coverage(manifest)` lists every model / source / seed and column that has
   no description, so CI can refuse an undocumented column.
+* `data_catalog(manifest, catalog)` joins both files per relation (warehouse
+  types, declared descriptions, upstream), `schema_drift(...)` lists what the
+  docs describe but the warehouse lacks, and `catalog_markdown(...)` renders it.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -192,3 +195,153 @@ def doc_coverage(manifest: Mapping[str, Any]) -> DocCoverage:
             if not (column.get("description") or "").strip():
                 cov.missing_columns.append(f"{node['unique_id']}.{name}")
     return cov
+
+
+# --- data catalog: manifest (what we declare) x catalog.json (what exists) -----
+
+
+@dataclass(frozen=True)
+class CatalogColumn:
+    name: str
+    type: str | None
+    description: str
+    declared: bool  # listed in a schema.yml
+    in_warehouse: bool
+
+
+@dataclass(frozen=True)
+class CatalogEntry:
+    unique_id: str
+    name: str
+    layer: str
+    relation: str
+    kind: str  # "view", "table", "source", ... as the warehouse reports it when known
+    description: str
+    upstream: tuple[str, ...]
+    columns: tuple[CatalogColumn, ...]
+    in_warehouse: bool
+
+
+def _warehouse_kind(entry: Mapping[str, Any] | None, node: Mapping[str, Any]) -> str:
+    if entry is not None:
+        raw = str((entry.get("metadata") or {}).get("type") or "").lower()
+        return {"base table": "table"}.get(raw, raw or "unknown")
+    if node["resource_type"] == "source":
+        return "source"
+    return str((node.get("config") or {}).get("materialized") or node["resource_type"])
+
+
+def _catalog_columns(
+    node: Mapping[str, Any], entry: Mapping[str, Any] | None
+) -> tuple[CatalogColumn, ...]:
+    declared = {name.lower(): col for name, col in (node.get("columns") or {}).items()}
+    actual = {
+        name.lower(): col
+        for name, col in sorted(
+            ((entry or {}).get("columns") or {}).items(), key=lambda kv: kv[1].get("index", 0)
+        )
+    }
+    # Warehouse order first (the order a SELECT * returns), then declared-only columns.
+    names = [*actual, *(n for n in declared if n not in actual)]
+    return tuple(
+        CatalogColumn(
+            name=name,
+            type=(actual.get(name) or {}).get("type"),
+            description=((declared.get(name) or {}).get("description") or "").strip(),
+            declared=name in declared,
+            in_warehouse=name in actual,
+        )
+        for name in names
+    )
+
+
+def data_catalog(
+    manifest: Mapping[str, Any], catalog: Mapping[str, Any] | None = None
+) -> list[CatalogEntry]:
+    """One entry per project relation, upstream first (by layer, then name)."""
+    graph = lineage(manifest)
+    warehouse = {**((catalog or {}).get("nodes") or {}), **((catalog or {}).get("sources") or {})}
+    raw = {n["unique_id"]: n for n in documented_nodes(manifest)}
+    entries = []
+    for layer_nodes in graph.by_layer().values():
+        for ln in layer_nodes:
+            node, entry = raw[ln.unique_id], warehouse.get(ln.unique_id)
+            entries.append(
+                CatalogEntry(
+                    unique_id=ln.unique_id,
+                    name=ln.name,
+                    layer=ln.layer,
+                    relation=ln.relation,
+                    kind=_warehouse_kind(entry, node),
+                    description=(node.get("description") or "").strip(),
+                    upstream=tuple(graph.nodes[p].name for p in graph.parents(ln.unique_id)),
+                    columns=_catalog_columns(node, entry),
+                    in_warehouse=entry is not None,
+                )
+            )
+    return entries
+
+
+@dataclass
+class SchemaDrift:
+    """Differences between the documented schema and the warehouse.
+
+    `missing_relations` and `missing_columns` (declared, not in the warehouse) mean
+    the docs describe something that does not exist: a hard error. `undeclared_columns`
+    exist but have no schema.yml entry: allowed (technical columns such as loaded_at),
+    but listed so the catalog says which columns are undocumented.
+    """
+
+    missing_relations: list[str] = field(default_factory=list)
+    missing_columns: list[str] = field(default_factory=list)
+    undeclared_columns: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.missing_relations and not self.missing_columns
+
+    def to_dict(self) -> dict[str, Any]:
+        out = vars(self).copy()
+        out["ok"] = self.ok
+        return out
+
+
+def schema_drift(entries: Iterable[CatalogEntry]) -> SchemaDrift:
+    drift = SchemaDrift()
+    for e in entries:
+        if not e.in_warehouse:
+            drift.missing_relations.append(e.unique_id)
+            continue
+        for c in e.columns:
+            if c.declared and not c.in_warehouse:
+                drift.missing_columns.append(f"{e.unique_id}.{c.name}")
+            elif c.in_warehouse and not c.declared:
+                drift.undeclared_columns.append(f"{e.unique_id}.{c.name}")
+    return drift
+
+
+def _cell(text: str | None) -> str:
+    return (text or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def catalog_markdown(entries: Sequence[CatalogEntry], *, title: str = "Data catalog") -> str:
+    """A README-ready catalog: an index table, then one column table per relation."""
+    lines = [f"# {title}", "", "| Layer | Relation | Kind | Description | Built from |"]
+    lines.append("|---|---|---|---|---|")
+    for e in entries:
+        anchor = e.relation.replace(".", "")
+        lines.append(
+            f"| {e.layer} | [`{e.relation}`](#{anchor}) | {e.kind} | {_cell(e.description)} "
+            f"| {', '.join(f'`{u}`' for u in e.upstream)} |"
+        )
+    for e in entries:
+        lines += ["", f"## {e.relation}", ""]
+        if e.description:
+            lines += [e.description, ""]
+        if not e.in_warehouse:
+            lines += ["> Not found in the warehouse when the catalog was generated.", ""]
+        lines += ["| Column | Type | Description |", "|---|---|---|"]
+        for c in e.columns:
+            flag = "" if c.in_warehouse else " *(not in warehouse)*"
+            lines.append(f"| `{c.name}` | {c.type or '?'} | {_cell(c.description)}{flag} |")
+    return "\n".join(lines) + "\n"

@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/catalog/v1.json",
+    "dbt_version": "1.12.7",
+    "generated_at": "2026-11-19T08:12:44.120533Z"
+  },
+  "nodes": {
+    "seed.railfall.departments": {
+      "metadata": {"type": "BASE TABLE", "schema": "staging", "name": "departments", "owner": "railfall_transformer"},
+      "columns": {
+        "department": {"type": "text", "index": 1, "name": "department"},
+        "region_code": {"type": "text", "index": 2, "name": "region_code"}
+      },
+      "stats": {"has_stats": {"id": "has_stats", "label": "Has Stats?", "value": false, "include": false}},
+      "unique_id": "seed.railfall.departments"
+    },
+    "model.railfall.stg_sncf__punctuality_monthly": {
+      "metadata": {"type": "VIEW", "schema": "staging", "name": "stg_sncf__punctuality_monthly", "owner": "railfall_transformer"},
+      "columns": {
+        "route_month_id": {"type": "text", "index": 1, "name": "route_month_id"},
+        "trains_run": {"type": "integer", "index": 2, "name": "trains_run"},
+        "loaded_at": {"type": "timestamp with time zone", "index": 3, "name": "loaded_at"}
+      },
+      "stats": {},
+      "unique_id": "model.railfall.stg_sncf__punctuality_monthly"
+    },
+    "model.railfall.dim_route": {
+      "metadata": {"type": "BASE TABLE", "schema": "marts", "name": "dim_route", "owner": "railfall_transformer"},
+      "columns": {
+        "route_id": {"type": "text", "index": 1, "name": "route_id"}
+      },
+      "stats": {},
+      "unique_id": "model.railfall.dim_route"
+    }
+  },
+  "sources": {
+    "source.railfall.raw.punctuality_monthly": {
+      "metadata": {"type": "BASE TABLE", "schema": "raw", "name": "punctuality_monthly", "owner": "railfall_loader"},
+      "columns": {
+        "route_month_id": {"type": "text", "index": 1, "name": "route_month_id"},
+        "year": {"type": "smallint", "index": 2, "name": "year"}
+      },
+      "stats": {},
+      "unique_id": "source.railfall.raw.punctuality_monthly"
+    }
+  },
+  "errors": null
+}
