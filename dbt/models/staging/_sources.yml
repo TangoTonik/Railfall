@@ -21,22 +21,31 @@ sources:
             description: First day of the month.
             data_tests: [not_null]
           - name: year
+            description: "Calendar year of the row, denormalised for partition-style filtering."
           - name: route_id
             description: Stable hash of the normalised departure and arrival station names.
             data_tests: [not_null]
           - name: service
+            description: "AQST service: \"National\" or \"International\"."
             data_tests: [not_null]
           - name: departure_station
+            description: "Departure station as AQST names it (upper case, e.g. PARIS LYON)."
             data_tests: [not_null]
           - name: arrival_station
+            description: "Arrival station as AQST names it (upper case, e.g. MARSEILLE ST CHARLES)."
             data_tests: [not_null]
           - name: trains_planned
+            description: "Trains scheduled on the route that month."
           - name: trains_cancelled
+            description: "Scheduled trains that did not run."
           - name: trains_late_arrival
+            description: "Trains that reached the arrival station late (AQST definition)."
           - name: trains_run
+            description: "Trains that ran: planned minus cancelled."
           - name: arrival_punctuality_rate
             description: Share of trains run that arrived on time (0-1).
           - name: pct_cause_external
+            description: "Share of late trains attributed to external causes (weather, obstacles, strikes), in percent."
         data_tests:
           - unique_combination_of_columns:
               arguments:
@@ -46,19 +55,30 @@ sources:
         description: Météo-France daily climatology per station (BASE/QUOT).
         columns:
           - name: department
+            description: "INSEE department code of the station."
             data_tests: [not_null]
           - name: station_id
+            description: "Météo-France station number (8 digits, NUM_POSTE)."
             data_tests: [not_null]
           - name: day
+            description: "Observation date (AAAAMMJJ in the source files)."
             data_tests: [not_null]
           - name: year
+            description: "Calendar year of the observation."
           - name: month
+            description: "First day of the observation's month."
           - name: latitude
+            description: "Latitude in decimal degrees (WGS84)."
           - name: longitude
+            description: "Longitude in decimal degrees (WGS84)."
           - name: precipitation_mm
+            description: "Daily precipitation (RR) in millimetres."
           - name: temp_min_c
+            description: "Minimum temperature (TN) in °C."
           - name: temp_max_c
+            description: "Maximum temperature (TX) in °C."
           - name: wind_mean_ms
+            description: "Mean wind speed at 10 m (FFM) in m/s."
         data_tests:
           - unique_combination_of_columns:
               arguments:
@@ -68,31 +88,50 @@ sources:
         description: SNCF passenger stations, one row per UIC code.
         columns:
           - name: uic_code
+            description: "UIC station code, the SNCF stations' natural key."
             data_tests: [not_null, unique]
           - name: station_name
+            description: "Station name as SNCF publishes it (e.g. Paris Gare de Lyon)."
           - name: name_key
+            description: "Upper-case, accent- and punctuation-free station name, used for matching."
           - name: department
+            description: "INSEE department code of the station's commune."
           - name: latitude
+            description: "Station latitude in decimal degrees (WGS84)."
           - name: longitude
+            description: "Station longitude in decimal degrees (WGS84)."
 
       - name: weather_monthly
         description: Weather aggregated to department x month.
         columns:
           - name: department
+            description: "INSEE department code (\"01\", \"2A\", \"974\")."
             data_tests: [not_null]
           - name: month
+            description: "First day of the month."
             data_tests: [not_null]
           - name: year
+            description: "Calendar year of the month."
           - name: stations
+            description: "Distinct Météo-France stations that reported in the department that month."
           - name: precipitation_mm
+            description: "Mean monthly precipitation of the covered stations, in millimetres."
           - name: rain_days
+            description: "Days with at least 1 mm of rain, scaled to the full month."
           - name: heavy_rain_days
+            description: "Days with at least 10 mm of rain, scaled to the full month."
           - name: temp_mean_c
+            description: "Mean of the stations' monthly mean temperature, in °C."
           - name: temp_min_c
+            description: "Mean of the stations' monthly mean TN, in °C."
           - name: frost_days
+            description: "Days with TN below 0 °C, scaled to the full month."
           - name: wind_mean_ms
+            description: "Mean of the stations' monthly mean wind, in m/s."
           - name: wind_max_ms
+            description: "Strongest hourly mean wind (FXY) of any station that month, in m/s."
           - name: strong_wind_days
+            description: "Days with FXY at or above 10.8 m/s (Beaufort 6), scaled to the month."
         data_tests:
           - unique_combination_of_columns:
               arguments:
@@ -102,23 +141,34 @@ sources:
         description: TGV route -> departure / arrival department, with match quality.
         columns:
           - name: route_id
+            description: "Stable hash of the normalised departure and arrival station names."
             data_tests: [not_null, unique]
           - name: departure_station
+            description: "Departure station as AQST names it (upper case, e.g. PARIS LYON)."
           - name: arrival_station
+            description: "Arrival station as AQST names it (upper case, e.g. MARSEILLE ST CHARLES)."
           - name: departure_department
+            description: "Department of the departure station; null when foreign or unmatched."
           - name: arrival_department
+            description: "Department of the arrival station; null when foreign or unmatched."
           - name: departure_match
+            description: "How the departure station was placed: alias, foreign, exact, prefix or unmatched."
           - name: arrival_match
+            description: "How the arrival station was placed: alias, foreign, exact, prefix or unmatched."
           - name: is_domestic
+            description: "True when both endpoints resolved to a French department."
 
       - name: route_weather_monthly
         description: Route-month punctuality joined with the weather at both endpoints.
         columns:
           - name: month
+            description: "First day of the month."
             data_tests: [not_null]
           - name: service
+            description: "AQST service: \"National\" or \"International\"."
             data_tests: [not_null]
           - name: route_id
+            description: "Stable hash of the normalised departure and arrival station names."
             data_tests: [not_null]
         data_tests:
           - unique_combination_of_columns:

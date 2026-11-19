@@ -8,10 +8,14 @@ seeds:
       the SNCF stations export both use these INSEE department codes.
     columns:
       - name: department
+        description: "INSEE department code (\"01\", \"2A\", \"974\")."
         data_tests: [not_null, unique]
       - name: department_name
+        description: "Department name (INSEE COG)."
         data_tests: [not_null]
       - name: region_code
+        description: "INSEE region code."
         data_tests: [not_null]
       - name: region_name
+        description: "Region name (INSEE COG 2024)."
         data_tests: [not_null]

@@ -22,16 +22,20 @@ models:
         description: Surrogate key md5(month | service | route_id).
         data_tests: [not_null, unique]
       - name: month
+        description: "First day of the month."
         data_tests: [not_null]
       - name: route_id
+        description: "Stable hash of the normalised departure and arrival station names."
         data_tests: [not_null]
       - name: service
+        description: "AQST service: \"National\" or \"International\"."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["National", "International"]
       - name: trains_planned
+        description: "Trains scheduled on the route that month."
         data_tests:
           - not_null
           - accepted_range:
@@ -39,6 +43,7 @@ models:
                 min_value: 0
                 inclusive: false
       - name: trains_run
+        description: "Trains that ran: planned minus cancelled."
         data_tests:
           - not_null
           - accepted_range:
@@ -75,44 +80,53 @@ models:
     description: Daily weather per Météo-France station.
     columns:
       - name: station_id
+        description: "Météo-France station number (8 digits, NUM_POSTE)."
         data_tests: [not_null]
       - name: day
+        description: "Observation date (AAAAMMJJ in the source files)."
         data_tests: [not_null]
       - name: department
+        description: "INSEE department code of the station."
         data_tests: [not_null]
       # Silver's physical bounds (railfall.spark.weather.BOUNDS), re-checked on
       # the warehouse; tests/test_dbt_project.py keeps the two in sync.
       - name: precipitation_mm
+        description: "Daily precipitation (RR) in millimetres."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 500
       - name: temp_min_c
+        description: "Minimum temperature (TN) in °C."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: -50
                 max_value: 50
       - name: temp_max_c
+        description: "Maximum temperature (TX) in °C."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: -50
                 max_value: 50
       - name: temp_mean_c
+        description: "Mean temperature (TM, or (TN + TX) / 2 when TM is missing) in °C."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: -50
                 max_value: 50
       - name: wind_mean_ms
+        description: "Mean wind speed at 10 m (FFM) in m/s."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 100
       - name: wind_max_hourly_ms
+        description: "Highest hourly mean wind of the day (FXY) in m/s."
         data_tests:
           - accepted_range:
               arguments:
@@ -127,8 +141,10 @@ models:
     description: SNCF passenger stations, one row per UIC code.
     columns:
       - name: uic_code
+        description: "UIC station code, the SNCF stations' natural key."
         data_tests: [not_null, unique]
       - name: department
+        description: "INSEE department code of the station's commune."
         data_tests: [not_null]
 
   - name: stg_meteo__weather_monthly
@@ -155,8 +171,10 @@ models:
         description: Surrogate key md5(department | month).
         data_tests: [not_null, unique]
       - name: department
+        description: "INSEE department code (\"01\", \"2A\", \"974\")."
         data_tests: [not_null]
       - name: month
+        description: "First day of the month."
         data_tests: [not_null]
       - name: stations
         description: Distinct stations that reported in the department that month.
@@ -169,30 +187,35 @@ models:
       # Day counts are scaled to the month length, so they are averages, not
       # integers, but never more than 31.
       - name: rain_days
+        description: "Days with at least 1 mm of rain, scaled to the full month."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 31
       - name: heavy_rain_days
+        description: "Days with at least 10 mm of rain, scaled to the full month."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 31
       - name: frost_days
+        description: "Days with TN below 0 °C, scaled to the full month."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 31
       - name: strong_wind_days
+        description: "Days with FXY at or above 10.8 m/s (Beaufort 6), scaled to the month."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 31
       - name: precipitation_mm
+        description: "Mean monthly precipitation of the covered stations, in millimetres."
         data_tests:
           - accepted_range:
               arguments:
@@ -202,18 +225,22 @@ models:
     description: TGV route -> endpoint departments, with the match method per side.
     columns:
       - name: route_id
+        description: "Stable hash of the normalised departure and arrival station names."
         data_tests: [not_null, unique]
       - name: departure_match
+        description: "How the departure station was placed: alias, foreign, exact, prefix or unmatched."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["alias", "foreign", "exact", "prefix", "unmatched"]
       - name: arrival_match
+        description: "How the arrival station was placed: alias, foreign, exact, prefix or unmatched."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["alias", "foreign", "exact", "prefix", "unmatched"]
       - name: is_domestic
+        description: "True when both endpoints resolved to a French department."
         data_tests: [not_null]

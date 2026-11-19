@@ -12,6 +12,7 @@ models:
         description: INSEE department code ("01", "2A", "974").
         data_tests: [not_null, unique]
       - name: region_name
+        description: "Region the department belongs to (INSEE COG 2024)."
         data_tests: [not_null]
       - name: stations
         description: SNCF passenger stations located in the department.
@@ -21,6 +22,7 @@ models:
               arguments:
                 min_value: 0
       - name: has_weather
+        description: "True when Météo-France data exists for the department in the warehouse."
         data_tests: [not_null]
 
   - name: dim_month
@@ -34,18 +36,21 @@ models:
         description: First day of the month (the join key of every fact).
         data_tests: [not_null, unique]
       - name: month_of_year
+        description: "Calendar month number, 1-12."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 1
                 max_value: 12
       - name: days_in_month
+        description: "Number of days in the month (28-31)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 28
                 max_value: 31
       - name: season
+        description: "Meteorological season: winter is Dec-Feb, spring Mar-May, summer Jun-Aug, autumn Sep-Nov."
         data_tests:
           - not_null
           - accepted_values:
@@ -62,8 +67,10 @@ models:
             min_rows: 1
     columns:
       - name: route_id
+        description: "Stable hash of the normalised departure and arrival station names."
         data_tests: [not_null, unique]
       - name: route_label
+        description: "Human-readable route, departure → arrival."
         data_tests: [not_null]
       - name: departure_department
         description: Null for foreign or unmatched endpoints.
@@ -73,24 +80,28 @@ models:
                 to: ref('dim_department')
                 field: department
       - name: arrival_department
+        description: "Department of the arrival station; null when foreign or unmatched."
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_department')
                 field: department
       - name: departure_match
+        description: "How the departure station was placed: alias, foreign, exact, prefix or unmatched."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["alias", "foreign", "exact", "prefix", "unmatched"]
       - name: arrival_match
+        description: "How the arrival station was placed: alias, foreign, exact, prefix or unmatched."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["alias", "foreign", "exact", "prefix", "unmatched"]
       - name: months_reported
+        description: "Distinct months with at least one punctuality row for the route."
         data_tests:
           - not_null
           - accepted_range:
@@ -108,8 +119,10 @@ models:
             columns: [month, service, route_id]
     columns:
       - name: route_month_id
+        description: "Surrogate key md5(month | service | route_id)."
         data_tests: [not_null, unique]
       - name: route_id
+        description: "Stable hash of the normalised departure and arrival station names."
         data_tests:
           - not_null
           - relationships:
@@ -117,6 +130,7 @@ models:
                 to: ref('dim_route')
                 field: route_id
       - name: month
+        description: "First day of the month (joins dim_month)."
         data_tests:
           - not_null
           - relationships:
@@ -124,23 +138,27 @@ models:
                 to: ref('dim_month')
                 field: month
       - name: departure_department
+        description: "Department of the departure station; null when foreign or unmatched."
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_department')
                 field: department
       - name: arrival_department
+        description: "Department of the arrival station; null when foreign or unmatched."
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_department')
                 field: department
       - name: trains_on_time
+        description: "Trains run minus trains late at arrival; null when no train ran."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
       - name: arrival_punctuality_rate
+        description: "Share of trains run that arrived on time (0-1)."
         data_tests:
           - accepted_range:
               arguments:
@@ -161,8 +179,10 @@ models:
             columns: [department, month]
     columns:
       - name: department_month_id
+        description: "Surrogate key md5(department | month)."
         data_tests: [not_null, unique]
       - name: department
+        description: "INSEE department code (joins dim_department)."
         data_tests:
           - not_null
           - relationships:
@@ -170,6 +190,7 @@ models:
                 to: ref('dim_department')
                 field: department
       - name: month
+        description: "First day of the month (joins dim_month)."
         data_tests:
           - not_null
           - relationships:
@@ -177,18 +198,21 @@ models:
                 to: ref('dim_month')
                 field: month
       - name: rain_day_share
+        description: "rain_days over the length of the month (0-1)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: frost_day_share
+        description: "frost_days over the length of the month (0-1)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: strong_wind_day_share
+        description: "strong_wind_days over the length of the month (0-1)."
         data_tests:
           - accepted_range:
               arguments:
@@ -201,8 +225,11 @@ models:
               arguments:
                 min_value: 0
       - name: is_wet_month
+        description: "Rain at least 1.5x the department's normal for that calendar month (needs two years of history)."
         data_tests: [not_null]
       - name: is_frosty_month
+        description: "At least 10 frost days in the month."
         data_tests: [not_null]
       - name: is_windy_month
+        description: "At least 5 strong-wind days in the month."
         data_tests: [not_null]

@@ -12,8 +12,10 @@ models:
             min_rows: 1
     columns:
       - name: route_month_id
+        description: "Surrogate key inherited from fact_route_month."
         data_tests: [not_null, unique]
       - name: route_id
+        description: "Stable hash of the normalised departure and arrival station names."
         data_tests:
           - not_null
           - relationships:
@@ -21,6 +23,7 @@ models:
                 to: ref('dim_route')
                 field: route_id
       - name: month
+        description: "First day of the month."
         data_tests:
           - not_null
           - relationships:
@@ -28,23 +31,29 @@ models:
                 to: ref('dim_month')
                 field: month
       - name: is_wet
+        description: "Either endpoint department had a wet month."
         data_tests: [not_null]
       - name: is_frosty
+        description: "Either endpoint department had a frosty month."
         data_tests: [not_null]
       - name: is_windy
+        description: "Either endpoint department had a windy month."
         data_tests: [not_null]
       - name: max_precipitation_ratio
+        description: "Higher precipitation_ratio of the two endpoint departments."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
       - name: weather_coverage
+        description: "Which endpoints have weather: both, departure_only, arrival_only or none."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["both", "departure_only", "arrival_only", "none"]
       - name: weather_condition
+        description: "Single label, worst first: frost > wind > rain > calm; unknown without weather at either end."
         data_tests:
           - not_null
           - accepted_values:
@@ -64,32 +73,38 @@ models:
             columns: [weather_factor, exposure]
     columns:
       - name: weather_exposure_id
+        description: "Readable key weather_factor-exposure (e.g. rain-adverse)."
         data_tests: [not_null, unique]
       - name: weather_factor
+        description: "Weather factor compared: rain, wind or frost."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["rain", "wind", "frost"]
       - name: exposure
+        description: "adverse when the route-month was flagged for the factor, otherwise normal."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["adverse", "normal"]
       - name: route_months
+        description: "Route-months pooled into the row."
         data_tests:
           - not_null
           - accepted_range:
               arguments:
                 min_value: 1
       - name: arrival_punctuality_rate
+        description: "On-time share of the pooled trains run, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: cancellation_rate
+        description: "Cancelled over planned trains, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:
@@ -118,8 +133,10 @@ models:
             columns: [region_code, season, weather_factor, exposure]
     columns:
       - name: region_season_exposure_id
+        description: "Readable key region_code-season-weather_factor-exposure."
         data_tests: [not_null, unique]
       - name: region_code
+        description: "INSEE region code of the route (departure end, arrival as fallback)."
         data_tests:
           - not_null
           - relationships:
@@ -127,26 +144,31 @@ models:
                 to: ref('departments')
                 field: region_code
       - name: region_name
+        description: "Region name for region_code."
         data_tests: [not_null]
       - name: season
+        description: "Meteorological season: winter is Dec-Feb, spring Mar-May, summer Jun-Aug, autumn Sep-Nov."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["winter", "spring", "summer", "autumn"]
       - name: weather_factor
+        description: "Weather factor compared: rain, wind or frost."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["rain", "wind", "frost"]
       - name: exposure
+        description: "adverse when the route-month was flagged for the factor, otherwise normal."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["adverse", "normal"]
       - name: route_months
+        description: "Route-months pooled into the row."
         data_tests:
           - not_null
           - accepted_range:
@@ -160,14 +182,17 @@ models:
               arguments:
                 min_value: 1
       - name: has_comparison
+        description: "True when the region-season-factor has both an adverse and a normal row."
         data_tests: [not_null]
       - name: arrival_punctuality_rate
+        description: "On-time share of the pooled trains run, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: cancellation_rate
+        description: "Cancelled over planned trains, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:
@@ -198,14 +223,17 @@ models:
             columns: [weather_factor, band_order]
     columns:
       - name: weather_intensity_id
+        description: "Readable key weather_factor-intensity_band (e.g. frost-hard)."
         data_tests: [not_null, unique]
       - name: weather_factor
+        description: "Weather factor compared: rain, wind or frost."
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: ["rain", "wind", "frost"]
       - name: intensity_band
+        description: "Named intensity band of the factor (e.g. rain: dry … extreme; frost: none … severe)."
         data_tests:
           - not_null
           - accepted_values:
@@ -222,25 +250,30 @@ models:
                 min_value: 1
                 max_value: 5
       - name: is_baseline
+        description: "True for the factor's reference band the gap columns compare against."
         data_tests: [not_null]
       - name: route_months
+        description: "Route-months whose worse end falls in the band."
         data_tests:
           - not_null
           - accepted_range:
               arguments:
                 min_value: 1
       - name: min_intensity
+        description: "Lowest intensity value observed in the band (ratio for rain, days otherwise)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
       - name: arrival_punctuality_rate
+        description: "On-time share of the pooled trains run, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:
                 min_value: 0
                 max_value: 1
       - name: cancellation_rate
+        description: "Cancelled over planned trains, rebuilt from the summed counts (0-1)."
         data_tests:
           - accepted_range:
               arguments:

@@ -547,3 +547,28 @@ def test_dim_month_gap_free_singular_test_exists():
     )
     assert "ref('dim_month')" in sql
     assert "interval '1 month'" in sql
+
+
+def _documented_relations() -> list[tuple[str, dict]]:
+    """Every source table, model and seed declared in a schema file."""
+    found: list[tuple[str, dict]] = []
+    for path in sorted([*(DBT_DIR / "models").rglob("*.yml"), *(DBT_DIR / "seeds").glob("*.yml")]):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for source in doc.get("sources", []):
+            found += [(f"{source['name']}.{t['name']}", t) for t in source.get("tables", [])]
+        for kind in ("models", "seeds"):
+            found += [(r["name"], r) for r in doc.get(kind, [])]
+    return found
+
+
+def test_every_declared_relation_and_column_is_described():
+    # The docs bundle runs with --strict in e2e; catch a bare column here first.
+    relations = _documented_relations()
+    assert len(relations) == 21
+    missing = [
+        f"{name}.{column['name']}" if column else name
+        for name, relation in relations
+        for column in [None, *relation.get("columns", [])]
+        if not ((column or relation).get("description") or "").strip()
+    ]
+    assert missing == []
