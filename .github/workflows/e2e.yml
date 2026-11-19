@@ -565,6 +565,8 @@ jobs:
                    mart_punctuality_by_region_season mart_punctuality_by_weather_intensity; do
             grep -q "$m" dbt-docs-bundle/catalog.md || { echo "$m not in catalog.md"; exit 1; }
           done
+          # The README catalog is generated from this same manifest: it must match.
+          make -s dbt-docs-bundle DOCS_ARGS="--readme README.md --check"
           cp dbt/target/{static_index.html,index.html,manifest.json,catalog.json} dbt-docs-bundle/
           {
             echo "## dbt lineage"

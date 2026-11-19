@@ -308,3 +308,19 @@ def test_quality_results_reach_the_summary_and_are_kept_as_an_artifact(steps):
     assert upload.get("if") == "always()", "reports are kept even when the gate fails"
     assert "canary.json" in upload["with"]["path"]
     assert steps.index(upload) > _index(steps, "make --no-print-directory quality-canary")
+
+
+def test_docs_are_generated_strictly_and_the_readme_catalog_checked(steps):
+    runs = [s.get("run", "") for s in steps]
+    rebuild = max(i for i, r in enumerate(runs) if "dbt-build" in r and "marts" in r)
+    generate = _index(steps, "make --no-print-directory dbt-docs ")
+    bundle = _index(steps, 'DOCS_ARGS="--strict')
+    assert rebuild < generate < bundle, "docs describe the final warehouse"
+    assert '--readme README.md --check"' in runs[bundle], "README catalog matches the manifest"
+    upload = next(
+        s
+        for s in steps
+        if s.get("uses", "").startswith("actions/upload-artifact@")
+        and s["with"]["name"] == "dbt-docs"
+    )
+    assert upload.get("if") == "always()" and steps.index(upload) > bundle
