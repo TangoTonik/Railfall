@@ -226,3 +226,52 @@ def test_project_lineage_flows_raw_to_staging_to_marts(real_manifest):
         n.name for n in layers["marts"]
     }
     assert dangling == {"stg_meteo__weather_daily", "route_weather_monthly"}
+
+
+# --- CLI ---------------------------------------------------------------------------
+
+
+def _target(tmp_path, *, with_catalog=True):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "manifest.json").write_text((FIXTURES / "manifest.json").read_text())
+    if with_catalog:
+        (target / "catalog.json").write_text((FIXTURES / "catalog.json").read_text())
+    return target
+
+
+def test_write_bundle_writes_every_file(tmp_path):
+    out = tmp_path / "bundle"
+    summary = docs.write_bundle(_target(tmp_path), out)
+    assert sorted(p.name for p in out.iterdir()) == sorted(docs.BUNDLE_FILES)
+    assert summary["relations"] == 5 and summary["edges"] == 5
+    assert summary["drift"]["missing_relations"] == ["model.railfall.fact_route_month"]
+    assert not summary["ok"]
+    assert (out / "lineage.mmd").read_text().startswith("flowchart LR")
+    assert docs.load_json(out / "lineage.json")["edges"]
+
+
+def test_write_bundle_without_catalog_skips_drift(tmp_path):
+    summary = docs.write_bundle(_target(tmp_path, with_catalog=False), tmp_path / "b")
+    assert summary["drift"] is None
+    assert docs.load_json(tmp_path / "b" / "drift.json") is None
+
+
+def test_cli_strict_fails_on_gaps_and_lenient_does_not(tmp_path, capsys):
+    target = _target(tmp_path)
+    assert docs.main(["--target-dir", str(target), "--out-dir", str(tmp_path / "a")]) == 0
+    assert (
+        docs.main(["--target-dir", str(target), "--out-dir", str(tmp_path / "b"), "--strict"]) == 1
+    )
+    assert '"relations": 5' in capsys.readouterr().out
+
+
+def test_cli_without_manifest_is_a_usage_error(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        docs.main(["--target-dir", str(tmp_path)])
+    assert exc.value.code == 2
+
+
+def test_cli_reads_dbt_target_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("DBT_TARGET_PATH", str(_target(tmp_path)))
+    assert docs.main(["--out-dir", str(tmp_path / "out")]) == 0

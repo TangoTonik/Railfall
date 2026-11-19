@@ -19,7 +19,10 @@ runs the same on a laptop and in CI.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -345,3 +348,71 @@ def catalog_markdown(entries: Sequence[CatalogEntry], *, title: str = "Data cata
             flag = "" if c.in_warehouse else " *(not in warehouse)*"
             lines.append(f"| `{c.name}` | {c.type or '?'} | {_cell(c.description)}{flag} |")
     return "\n".join(lines) + "\n"
+
+
+# --- CLI -------------------------------------------------------------------------
+
+BUNDLE_FILES = ("lineage.mmd", "lineage.json", "coverage.json", "drift.json", "catalog.md")
+
+
+def write_bundle(target_dir: Path, out_dir: Path) -> dict[str, Any]:
+    """Write the lineage / coverage / drift / catalog files from dbt's target dir.
+
+    `catalog.json` is optional (it needs a warehouse); without it the catalog has
+    no column types and drift is not computed.
+    """
+    manifest = load_json(target_dir / "manifest.json")
+    catalog_path = target_dir / "catalog.json"
+    catalog = load_json(catalog_path) if catalog_path.exists() else None
+
+    graph = lineage(manifest)
+    coverage = doc_coverage(manifest)
+    entries = data_catalog(manifest, catalog)
+    drift = schema_drift(entries) if catalog is not None else None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "lineage.mmd").write_text(lineage_mermaid(graph))
+    (out_dir / "lineage.json").write_text(json.dumps(graph.to_dict(), indent=2) + "\n")
+    (out_dir / "coverage.json").write_text(json.dumps(coverage.to_dict(), indent=2) + "\n")
+    (out_dir / "drift.json").write_text(
+        json.dumps(drift.to_dict() if drift else None, indent=2) + "\n"
+    )
+    (out_dir / "catalog.md").write_text(catalog_markdown(entries))
+    return {
+        "relations": len(graph.nodes),
+        "edges": len(graph.edges),
+        "coverage": coverage.to_dict(),
+        "drift": drift.to_dict() if drift else None,
+        "ok": coverage.ok and (drift is None or drift.ok),
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from railfall.transform.dbt import project_dir
+
+    parser = argparse.ArgumentParser(
+        description="Lineage, doc coverage and a data catalog from dbt's target/ artifacts."
+    )
+    parser.add_argument(
+        "--target-dir",
+        type=Path,
+        default=None,
+        help="dbt target directory (default: $DBT_TARGET_PATH or <project>/target)",
+    )
+    parser.add_argument("--out-dir", type=Path, default=Path("dbt-docs-bundle"))
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 on an undocumented relation/column or on schema drift",
+    )
+    args = parser.parse_args(argv)
+    target = args.target_dir or Path(os.environ.get("DBT_TARGET_PATH") or project_dir() / "target")
+    if not (target / "manifest.json").exists():
+        parser.error(f"{target}/manifest.json not found; run `dbt parse` or `dbt docs generate`")
+    summary = write_bundle(target, args.out_dir)
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["ok"] or not args.strict else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
