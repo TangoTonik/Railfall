@@ -557,3 +557,36 @@ exactly the same before and after, proving the canary left `raw` untouched.
 **Results are visible, not just green.** The checkpoint renders a Markdown
 table per run; e2e appends it to the job summary and keeps the JSON report as
 an artifact, so a reviewer sees what was checked without reading logs.
+
+## Day 15 — dbt docs, lineage and data catalog
+
+**Read dbt's artifacts, don't re-derive them.** Lineage, coverage and the
+catalog come from `manifest.json` and `catalog.json`, the files `dbt docs
+generate` already writes. `railfall.transform.docs` never imports dbt or opens a
+connection, so it is unit-tested on a small hand-written manifest and runs the
+same on a laptop and in CI. Lineage is model-level (sources, seeds, models);
+tests are left out because they would triple the graph without adding a path.
+
+**Docs on the real warehouse, and strict.** e2e generates the docs after the
+marts are rebuilt on the real data, as the transformer role, and fails on any
+catalog error. The bundle then requires every declared relation and column to
+be described and to exist in Postgres. Columns that exist but are not declared
+(`_loaded_at`, `_updated_at`) are reported, not fatal: describing technical
+columns on every model would be noise. Drift the other way, docs describing a
+column that is gone, is the bug that matters and fails the run.
+
+**Publish as an artifact, not a Pages site.** The `dbt-docs` artifact holds
+dbt's `static_index.html` (a single file that opens from disk, no server), the
+raw JSON and the bundle; the lineage is also drawn in the run summary as
+Mermaid. GitHub Pages would need a deploy job and repository settings outside
+the code; an artifact per run also keeps the docs tied to the exact commit.
+
+**The README catalog is generated and checked.** A hand-written catalog would
+go stale with the first renamed column. The README block between markers is
+rendered from the manifest only (`dbt parse`, no database), so it is identical
+on any machine and diffable in review; warehouse types stay in the artifact's
+`catalog.md`, where they come from the real Postgres. `make readme-catalog`
+rewrites it, a unit test (when dbt is installed) and e2e (against the manifest
+of the live run) fail when it is stale. Writing only between markers keeps the
+rest of the README hand-edited, and missing markers are an error, never a
+silent append.
