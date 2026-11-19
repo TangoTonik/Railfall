@@ -341,3 +341,11 @@ def test_cli_check_needs_readme(tmp_path):
         docs.main(["--target-dir", str(_target(tmp_path)), "--check"])
     assert exc.value.code == 2
 
+
+@needs_dbt
+def test_repo_readme_catalog_is_up_to_date(real_manifest):
+    """The README block matches the dbt project; `make readme-catalog` fixes it."""
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    assert docs.sync_readme(readme, docs.readme_section(real_manifest), check=True), (
+        "README data catalog is stale: run `make readme-catalog`"
+    )
