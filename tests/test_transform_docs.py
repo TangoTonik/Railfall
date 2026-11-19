@@ -275,3 +275,69 @@ def test_cli_without_manifest_is_a_usage_error(tmp_path):
 def test_cli_reads_dbt_target_path(tmp_path, monkeypatch):
     monkeypatch.setenv("DBT_TARGET_PATH", str(_target(tmp_path)))
     assert docs.main(["--out-dir", str(tmp_path / "out")]) == 0
+
+
+# --- README catalog block ----------------------------------------------------------
+
+
+def _readme(tmp_path, body="old"):
+    path = tmp_path / "README.md"
+    path.write_text(f"# Title\n\n{docs.README_START}\n{body}\n{docs.README_END}\n\n## After\n")
+    return path
+
+
+def test_readme_section_lists_every_relation_with_lineage(manifest):
+    section = docs.readme_section(manifest)
+    assert section.startswith(docs.README_START) and section.rstrip().endswith(docs.README_END)
+    assert "```mermaid\nflowchart LR" in section
+    for entry in docs.data_catalog(manifest):
+        assert f"`{entry.relation}`" in section
+    assert "<details><summary>Columns of the marts layer</summary>" in section
+
+
+def test_summary_keeps_the_first_sentence():
+    assert docs._summary("One route-month.  Grain is month x route.") == "One route-month."
+    assert docs._summary("No full stop") == "No full stop"
+
+
+def test_sync_readme_replaces_only_the_block(tmp_path, manifest):
+    path = _readme(tmp_path)
+    section = docs.readme_section(manifest)
+    assert docs.sync_readme(path, section) is False
+    text = path.read_text()
+    assert text.startswith("# Title\n\n") and text.endswith("\n\n## After\n")
+    assert "old" not in text
+    # Idempotent: a second run finds nothing to change.
+    assert docs.sync_readme(path, section) is True
+    assert path.read_text() == text
+
+
+def test_sync_readme_check_never_writes(tmp_path, manifest):
+    path = _readme(tmp_path)
+    before = path.read_text()
+    assert docs.sync_readme(path, docs.readme_section(manifest), check=True) is False
+    assert path.read_text() == before
+
+
+def test_sync_readme_without_markers_is_an_error(tmp_path):
+    path = tmp_path / "README.md"
+    path.write_text(f"{docs.README_END}\n{docs.README_START}\n")
+    with pytest.raises(ValueError, match="markers"):
+        docs.sync_readme(path, "x")
+
+
+def test_cli_readme_write_then_check(tmp_path, capsys):
+    target, readme = _target(tmp_path), _readme(tmp_path)
+    args = ["--target-dir", str(target), "--readme", str(readme)]
+    assert docs.main([*args, "--check"]) == 1
+    assert docs.main(args) == 0
+    assert docs.main([*args, "--check"]) == 0
+    assert "up to date" in capsys.readouterr().out
+    assert not (tmp_path / "dbt-docs-bundle").exists()
+
+
+def test_cli_check_needs_readme(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        docs.main(["--target-dir", str(_target(tmp_path)), "--check"])
+    assert exc.value.code == 2
+

@@ -25,7 +25,7 @@ TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
 AIRFLOW_PROFILE := --profile airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle quality quality-canary verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -111,6 +111,10 @@ dbt-docs: ## Generate dbt docs (manifest + catalog from the live warehouse)
 
 dbt-docs-bundle: ## Lineage, doc coverage, schema drift and catalog.md (DOCS_ARGS=--strict)
 	$(PYTHON) -m railfall.transform.docs $(DOCS_ARGS)
+
+readme-catalog: ## Regenerate the README data catalog from `dbt parse` (no database needed)
+	$(PYTHON) -m railfall.transform.dbt parse
+	$(PYTHON) -m railfall.transform.docs --readme README.md
 
 quality: ## Validate raw tables with the Great Expectations suites (QUALITY_ARGS=--report q.json)
 	$(PYTHON) -m railfall.quality.checkpoint $(QUALITY_ARGS)
