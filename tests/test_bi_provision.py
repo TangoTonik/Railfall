@@ -144,3 +144,15 @@ def test_main_rejects_a_broken_spec_before_calling_metabase(tmp_path, capsys):
     rc = main(["bootstrap", "--dashboards", str(tmp_path)], client=MetabaseClient(fake))
     assert rc == 1 and fake.calls == []
     assert "invalid JSON" in capsys.readouterr().err
+
+
+def test_main_exits_non_zero_and_names_the_bad_cards(monkeypatch, capsys):
+    monkeypatch.setenv("METABASE_ADMIN_PASSWORD", "pw-1")
+    fake = FakeMetabase()
+    fake.empty_tables = ("mart_punctuality_by_region_season",)
+    client = MetabaseClient(fake, sleep=lambda _s: None)
+    rc = main(["bootstrap", "--dashboards", str(SPEC_ROOT)], client=client)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert out.startswith("[FAIL]")
+    assert "! region_season_gaps returned no rows" in out
