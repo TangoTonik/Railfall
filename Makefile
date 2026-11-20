@@ -55,7 +55,7 @@ airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait 
 metabase: env ## Start Metabase (after `make up`) and wait until it is healthy
 	$(COMPOSE) $(BI_PROFILE) up -d --wait metabase
 
-dashboards: ## Bootstrap Metabase (admin, warehouse as railfall_reader, schema sync)
+dashboards: ## Bootstrap Metabase and provision the dashboards in bi/dashboards (idempotent)
 	$(PYTHON) -m railfall.bi.metabase bootstrap $(METABASE_ARGS)
 
 dag-run: ## Trigger a DAG and wait until it finishes (DAG=railfall_ingest DAG_ARGS=--conf '{...}')

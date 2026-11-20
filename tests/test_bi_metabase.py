@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from metabase_fake import FakeMetabase
 
 from railfall.bi.metabase import (
     EXPECTED_TABLES,
@@ -13,67 +14,6 @@ from railfall.bi.metabase import (
     MetabaseSettings,
     main,
 )
-
-
-class FakeMetabase:
-    """Answers like Metabase 0.52: health turns ok after `boot_polls`, setup works once
-    with the token, and synced tables appear `sync_polls` metadata calls after a sync."""
-
-    def __init__(self, *, boot_polls=0, sync_polls=1, tables=EXPECTED_TABLES):
-        self.boot_polls = boot_polls
-        self.sync_polls = sync_polls
-        self.warehouse_tables = list(tables)
-        self.users: dict[str, str] = {}
-        self.dbs: list[dict] = [{"id": 1, "name": "Sample Database", "engine": "h2"}]
-        self.synced: set[int] = set()
-        self.calls: list[tuple[str, str, dict | None, str | None]] = []
-
-    def __call__(self, method, path, body, session):
-        self.calls.append((method, path, body, session))
-        if path == "/health":
-            if self.boot_polls > 0:
-                self.boot_polls -= 1
-                return 503, {"status": "initializing", "progress": 0.4}
-            return 200, {"status": "ok"}
-        if path == "/session/properties":
-            props = {"has-user-setup": bool(self.users)}
-            if not self.users:
-                props["setup-token"] = "tok-123"
-            return 200, props
-        if method == "POST" and path == "/setup":
-            if self.users or body["token"] != "tok-123":
-                return 403, {"message": "The /api/setup route can only be used to create the first"}
-            self.users[body["user"]["email"]] = body["user"]["password"]
-            return 200, {"id": "sess-setup"}
-        if method == "POST" and path == "/session":
-            if self.users.get(body["username"]) != body["password"]:
-                return 401, {"errors": {"password": "did not match stored password"}}
-            return 200, {"id": "sess-login"}
-        if session is None:
-            return 401, "Unauthenticated"
-        if method == "GET" and path == "/database":
-            return 200, {"data": self.dbs, "total": len(self.dbs)}
-        if method == "POST" and path == "/database":
-            db = {"id": len(self.dbs) + 1, **body}
-            self.dbs.append(db)
-            return 200, db
-        if method == "PUT" and path.startswith("/database/"):
-            db_id = int(path.rsplit("/", 1)[1])
-            db = next(d for d in self.dbs if d["id"] == db_id)
-            db.update(body)
-            return 200, db
-        if method == "POST" and path.endswith("/sync_schema"):
-            self.synced.add(int(path.split("/")[2]))
-            return 200, {"status": "ok"}
-        if method == "GET" and "/metadata" in path:
-            db_id = int(path.split("/")[2])
-            if db_id not in self.synced or self.sync_polls > 0:
-                self.sync_polls -= 1
-                return 200, {"id": db_id, "tables": []}
-            tables = [{"schema": "marts", "name": t} for t in self.warehouse_tables]
-            tables.append({"schema": "staging", "name": "stg_sncf__stations"})
-            return 200, {"id": db_id, "tables": tables}
-        return 404, {"message": f"unscripted {method} {path}"}
 
 
 def _client(fake):

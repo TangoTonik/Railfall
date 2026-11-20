@@ -9,7 +9,8 @@ Steps: wait for `/api/health`, create the admin account with the one-time
 setup token when nobody has done it yet (otherwise log in), register the
 warehouse as `railfall_reader` restricted to the `marts` schema (created once,
 updated in place on later runs), sync its schema and wait until every expected
-mart is visible to Metabase.
+mart is visible to Metabase. Finally the dashboard specs under `bi/dashboards/`
+are provisioned and every card is run (see `railfall.bi.provision`).
 
 Only the standard library is used, like the Airflow client: it runs on the CI
 host next to the stack.
@@ -24,8 +25,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from railfall.bi.dashboards import DashboardSpec
 
 # Marts the dashboards read. The bootstrap waits until Metabase has synced them all.
 EXPECTED_TABLES: tuple[str, ...] = (
@@ -114,10 +120,11 @@ class BootstrapReport:
     database_created: bool
     tables: list[str]
     missing: list[str]
+    dashboards: list[dict] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.missing
+        return not self.missing and all(d["ok"] for d in self.dashboards)
 
     def to_dict(self) -> dict:
         return {**asdict(self), "ok": self.ok}
@@ -142,6 +149,10 @@ class MetabaseClient:
             detail = payload.get("message") if isinstance(payload, dict) else None
             raise MetabaseError(f"{method} {path} -> HTTP {status}: {detail or payload}")
         return payload
+
+    def api(self, method: str, path: str, body: dict | None = None) -> object:
+        """Authenticated call under /api; raises MetabaseError on HTTP >= 400."""
+        return self._ok(method, path, body)
 
     def wait_healthy(self, *, timeout_s: float = 300.0, poll_s: float = 5.0) -> None:
         deadline = self._clock() + timeout_s
@@ -257,6 +268,7 @@ class MetabaseClient:
         s: MetabaseSettings,
         *,
         expected: Iterable[str] = EXPECTED_TABLES,
+        dashboards: Sequence[DashboardSpec] = (),
         health_timeout_s: float = 300.0,
         sync_timeout_s: float = 300.0,
         poll_s: float = 5.0,
@@ -267,7 +279,7 @@ class MetabaseClient:
         seen, missing = self.sync_and_wait(
             db_id, s.schema, expected, timeout_s=sync_timeout_s, poll_s=poll_s
         )
-        return BootstrapReport(
+        report = BootstrapReport(
             url=s.url,
             created_admin=created_admin,
             database_id=db_id,
@@ -275,6 +287,13 @@ class MetabaseClient:
             tables=seen,
             missing=missing,
         )
+        # Dashboards on missing marts would only fail card by card; skip them.
+        if dashboards and not missing:
+            from railfall.bi.provision import DashboardProvisioner
+
+            provisioner = DashboardProvisioner(self, base_url=s.url)
+            report.dashboards = [d.to_dict() for d in provisioner.provision_all(dashboards, db_id)]
+        return report
 
 
 def _format(r: BootstrapReport) -> str:
@@ -285,8 +304,20 @@ def _format(r: BootstrapReport) -> str:
             f"warehouse db #{r.database_id} {'created' if r.database_created else 'updated'}",
             f"       {len(r.tables)} tables synced"
             + (f", missing: {', '.join(r.missing)}" if r.missing else ""),
+            *(_format_dashboard(d) for d in r.dashboards),
         ]
     )
+
+
+def _format_dashboard(d: dict) -> str:
+    line = (
+        f"       dashboard {d['name']!r} -> {d['url']}: {len(d['cards'])} cards "
+        f"({len(d['created'])} created, {len(d['updated'])} updated, "
+        f"{len(d['archived'])} archived)"
+    )
+    problems = [f"{k} failed: {e}" for k, e in d["failed"].items()]
+    problems += [f"{k} returned no rows" for k in d["empty"]]
+    return "\n".join([line, *(f"         ! {p}" for p in problems)])
 
 
 def main(argv: list[str] | None = None, *, client: MetabaseClient | None = None) -> int:
@@ -295,13 +326,33 @@ def main(argv: list[str] | None = None, *, client: MetabaseClient | None = None)
     parser.add_argument("--timeout", type=float, default=300.0, help="health and sync timeout (s)")
     parser.add_argument("--poll", type=float, default=5.0)
     parser.add_argument("--report", default=None, help="also write the JSON report to this file")
+    parser.add_argument(
+        "--dashboards",
+        type=Path,
+        default=Path("bi/dashboards"),
+        help="directory of dashboard specs to provision",
+    )
+    parser.add_argument(
+        "--skip-dashboards", action="store_true", help="only set up admin and warehouse"
+    )
     args = parser.parse_args(argv)
+
+    from railfall.bi.dashboards import DashboardSpecError, load_dashboards
+
+    specs: list[DashboardSpec] = []
+    if not args.skip_dashboards:
+        try:
+            specs = load_dashboards(args.dashboards, known_tables=EXPECTED_TABLES)
+        except DashboardSpecError as exc:
+            print(f"[FAIL] dashboard specs: {exc}", file=sys.stderr)
+            return 1
 
     settings = MetabaseSettings.from_env()
     client = client or MetabaseClient(http_transport(settings.url))
     try:
         report = client.bootstrap(
             settings,
+            dashboards=specs,
             health_timeout_s=args.timeout,
             sync_timeout_s=args.timeout,
             poll_s=args.poll,
