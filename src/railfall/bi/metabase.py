@@ -4,6 +4,7 @@ Used by `make dashboards` and the e2e workflow, so Metabase never needs a click
 in the setup wizard:
 
     python -m railfall.bi.metabase bootstrap --report metabase.json
+    python -m railfall.bi.metabase check --manifest dbt/target/manifest.json
 
 Steps: wait for `/api/health`, create the admin account with the one-time
 setup token when nobody has done it yet (otherwise log in), register the
@@ -11,6 +12,9 @@ warehouse as `railfall_reader` restricted to the `marts` schema (created once,
 updated in place on later runs), sync its schema and wait until every expected
 mart is visible to Metabase. Finally the dashboard specs under `bi/dashboards/`
 are provisioned and every card is run (see `railfall.bi.provision`).
+
+`check` validates the specs without calling Metabase at all and, given a dbt
+manifest, that every table they read is one dbt builds in `marts`.
 
 Only the standard library is used, like the Airflow client: it runs on the CI
 host next to the stack.
@@ -320,9 +324,37 @@ def _format_dashboard(d: dict) -> str:
     return "\n".join([line, *(f"         ! {p}" for p in problems)])
 
 
+def _check(root: Path, manifest: Path | None) -> int:
+    """Offline: specs are valid and, with a manifest, only read marts dbt builds."""
+    from railfall.bi.dashboards import (
+        DashboardSpecError,
+        check_manifest,
+        load_dashboards,
+        manifest_tables,
+    )
+
+    try:
+        specs = load_dashboards(root, known_tables=EXPECTED_TABLES)
+        built = manifest_tables(manifest) if manifest else None
+    except DashboardSpecError as exc:
+        print(f"[FAIL] dashboard specs: {exc}", file=sys.stderr)
+        return 1
+    problems = check_manifest(specs, built) if built is not None else {}
+    unsynced = sorted(set(EXPECTED_TABLES) - built) if built is not None else []
+    for spec in specs:
+        print(f"[  ok] {spec.slug}: {spec.name!r}, {len(spec.cards)} cards")
+    for card, missing in problems.items():
+        print(f"[FAIL] {card} reads {', '.join(missing)}, not built by dbt", file=sys.stderr)
+    for table in unsynced:
+        print(f"[FAIL] bootstrap waits for {table}, not built by dbt", file=sys.stderr)
+    if built is not None and not problems and not unsynced:
+        print(f"[  ok] every card reads one of the {len(built)} relations dbt builds in marts")
+    return 1 if problems or unsynced else 0
+
+
 def main(argv: list[str] | None = None, *, client: MetabaseClient | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("command", choices=["bootstrap"])
+    parser.add_argument("command", choices=["bootstrap", "check"])
     parser.add_argument("--timeout", type=float, default=300.0, help="health and sync timeout (s)")
     parser.add_argument("--poll", type=float, default=5.0)
     parser.add_argument("--report", default=None, help="also write the JSON report to this file")
@@ -333,11 +365,20 @@ def main(argv: list[str] | None = None, *, client: MetabaseClient | None = None)
         help="directory of dashboard specs to provision",
     )
     parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="check: also require every card's tables in this dbt manifest.json",
+    )
+    parser.add_argument(
         "--skip-dashboards", action="store_true", help="only set up admin and warehouse"
     )
     args = parser.parse_args(argv)
 
     from railfall.bi.dashboards import DashboardSpecError, load_dashboards
+
+    if args.command == "check":
+        return _check(args.dashboards, args.manifest)
 
     specs: list[DashboardSpec] = []
     if not args.skip_dashboards:

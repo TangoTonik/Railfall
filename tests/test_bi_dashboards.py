@@ -10,9 +10,11 @@ import pytest
 from railfall.bi.dashboards import (
     GRID_COLUMNS,
     DashboardSpecError,
+    check_manifest,
     check_sql,
     load_dashboard,
     load_dashboards,
+    manifest_tables,
 )
 from railfall.bi.metabase import EXPECTED_TABLES
 
@@ -147,3 +149,59 @@ def test_duplicate_dashboard_names(tmp_path):
 def test_empty_root(tmp_path):
     with pytest.raises(DashboardSpecError, match="no dashboard.json"):
         load_dashboards(tmp_path)
+
+
+# --- cross-check against the dbt manifest -----------------------------------
+
+FIXTURE_MANIFEST = REPO_ROOT / "tests" / "fixtures" / "dbt" / "manifest.json"
+
+
+def _manifest(tmp_path: Path, nodes: dict) -> Path:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"nodes": nodes}), encoding="utf-8")
+    return path
+
+
+def _node(name: str, schema: str = "marts", **extra) -> dict:
+    return {
+        "resource_type": extra.pop("resource_type", "model"),
+        "name": name,
+        "schema": schema,
+        "config": {"materialized": extra.pop("materialized", "table")},
+        **extra,
+    }
+
+
+def test_manifest_tables_reads_only_the_marts_relations():
+    assert manifest_tables(FIXTURE_MANIFEST) == {"dim_route", "fact_route_month"}
+    assert "stg_sncf__punctuality_monthly" in manifest_tables(FIXTURE_MANIFEST, schema="staging")
+
+
+def test_manifest_tables_uses_aliases_and_skips_ephemeral_models_and_tests(tmp_path):
+    path = _manifest(
+        tmp_path,
+        {
+            "model.a": _node("int_x", alias="Mart_X"),
+            "model.b": _node("helper", materialized="ephemeral"),
+            "test.c": _node("not_null_x", resource_type="test"),
+            "seed.d": _node("departments", resource_type="seed"),
+        },
+    )
+    assert manifest_tables(path) == {"mart_x", "departments"}
+
+
+def test_manifest_tables_missing_or_broken_file(tmp_path):
+    with pytest.raises(DashboardSpecError, match="make dbt-docs"):
+        manifest_tables(tmp_path / "nope.json")
+    (tmp_path / "bad.json").write_text("{", encoding="utf-8")
+    with pytest.raises(DashboardSpecError, match="invalid JSON"):
+        manifest_tables(tmp_path / "bad.json")
+
+
+def test_check_manifest_names_the_cards_dbt_cannot_feed():
+    specs = load_dashboards(SPEC_ROOT)
+    assert check_manifest(specs, EXPECTED_TABLES) == {}
+    problems = check_manifest(specs, {"fact_route_month"})
+    assert problems, "the weather marts are not in this manifest"
+    assert "weather_impact.overall_punctuality" not in problems
+    assert problems["weather_impact.punctuality_by_weather"] == ["mart_punctuality_by_weather"]

@@ -29,7 +29,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase dashboards infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -57,6 +57,9 @@ metabase: env ## Start Metabase (after `make up`) and wait until it is healthy
 
 dashboards: ## Bootstrap Metabase and provision the dashboards in bi/dashboards (idempotent)
 	$(PYTHON) -m railfall.bi.metabase bootstrap $(METABASE_ARGS)
+
+dashboards-check: ## Validate bi/dashboards offline (DASHBOARDS_ARGS="--manifest dbt/target/manifest.json")
+	$(PYTHON) -m railfall.bi.metabase check $(DASHBOARDS_ARGS)
 
 dag-run: ## Trigger a DAG and wait until it finishes (DAG=railfall_ingest DAG_ARGS=--conf '{...}')
 	$(PYTHON) -m railfall.orchestration.airflow_api $(DAG) $(DAG_ARGS)

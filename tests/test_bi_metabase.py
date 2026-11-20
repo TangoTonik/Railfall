@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from metabase_fake import FakeMetabase
@@ -99,3 +100,55 @@ def test_main_writes_report(tmp_path, monkeypatch, capsys):
     payload = json.loads(out.read_text())
     assert payload["ok"] and payload["missing"] == []
     assert "[  ok] Metabase" in capsys.readouterr().out
+
+
+SPEC_ROOT = Path(__file__).resolve().parents[1] / "bi" / "dashboards"
+
+
+def _full_manifest(tmp_path, tables):
+    nodes = {
+        f"model.railfall.{t}": {
+            "resource_type": "model",
+            "name": t,
+            "schema": "marts",
+            "config": {"materialized": "table"},
+        }
+        for t in tables
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"nodes": nodes}))
+    return path
+
+
+def test_check_is_offline_and_passes_on_the_shipped_specs(tmp_path, capsys):
+    fake = FakeMetabase()
+    manifest = _full_manifest(tmp_path, [*EXPECTED_TABLES, "dim_route"])
+    rc = main(
+        ["check", "--dashboards", str(SPEC_ROOT), "--manifest", str(manifest)],
+        client=_client(fake),
+    )
+    assert rc == 0
+    assert fake.calls == [], "check must never call Metabase"
+    out = capsys.readouterr().out
+    assert "weather_impact" in out and "relations dbt builds in marts" in out
+
+
+def test_check_without_manifest_only_validates_the_specs(capsys):
+    assert main(["check", "--dashboards", str(SPEC_ROOT)]) == 0
+    assert "relations dbt builds" not in capsys.readouterr().out
+
+
+def test_check_fails_when_dbt_no_longer_builds_a_mart(tmp_path, capsys):
+    gone = "mart_punctuality_by_region_season"
+    manifest = _full_manifest(tmp_path, [t for t in EXPECTED_TABLES if t != gone])
+    rc = main(["check", "--dashboards", str(SPEC_ROOT), "--manifest", str(manifest)])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert f"weather_impact.region_season_gaps reads {gone}" in err
+    assert f"bootstrap waits for {gone}" in err
+
+
+def test_check_fails_on_a_missing_manifest(tmp_path, capsys):
+    rc = main(["check", "--dashboards", str(SPEC_ROOT), "--manifest", str(tmp_path / "x.json")])
+    assert rc == 1
+    assert "make dbt-docs" in capsys.readouterr().err

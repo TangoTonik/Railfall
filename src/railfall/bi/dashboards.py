@@ -14,6 +14,10 @@ tests and CI rather than half-way through a provisioning run:
   `marts` tables the card declares, which must be ones the bootstrap syncs;
 - cards fit the grid and do not overlap.
 
+`check_manifest` goes one step further when a dbt `manifest.json` is at hand:
+every table a card reads must be a relation dbt actually builds in `marts`, so
+renaming a mart breaks the dashboards check, not the first person to open them.
+
 Standard library only, like the rest of `railfall.bi`.
 """
 
@@ -201,3 +205,40 @@ def load_dashboards(
     if dupes := sorted({n for n in names if names.count(n) > 1}):
         raise DashboardSpecError(f"{root}: duplicate dashboard names {dupes}")
     return specs
+
+
+_RELATION_TYPES = frozenset({"model", "seed", "snapshot"})
+
+
+def manifest_tables(manifest_path: Path, *, schema: str = "marts") -> set[str]:
+    """Relations dbt materialises in `schema`, read from a `manifest.json`.
+
+    Ephemeral models never exist in the database, so they do not count.
+    """
+    try:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise DashboardSpecError(f"{manifest_path}: not found (run `make dbt-docs`)") from None
+    except json.JSONDecodeError as exc:
+        raise DashboardSpecError(f"{manifest_path}: invalid JSON ({exc})") from None
+    tables: set[str] = set()
+    for node in manifest.get("nodes", {}).values():
+        if node.get("resource_type") not in _RELATION_TYPES:
+            continue
+        if node.get("config", {}).get("materialized") == "ephemeral":
+            continue
+        if str(node.get("schema", "")).lower() != schema.lower():
+            continue
+        tables.add(str(node.get("alias") or node["name"]).lower())
+    return tables
+
+
+def check_manifest(specs: Iterable[DashboardSpec], tables: Iterable[str]) -> dict[str, list[str]]:
+    """`{"<dashboard slug>.<card key>": [missing tables]}` for every card dbt cannot feed."""
+    built = {t.lower() for t in tables}
+    problems: dict[str, list[str]] = {}
+    for spec in specs:
+        for card in spec.cards:
+            if missing := sorted(t for t in card.tables if t.lower() not in built):
+                problems[f"{spec.slug}.{card.key}"] = missing
+    return problems
