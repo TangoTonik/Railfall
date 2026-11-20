@@ -40,6 +40,7 @@ def test_help_lists_documented_targets():
         "load",
         "airflow",
         "metabase",
+        "dashboards",
         "dag-run",
         "dbt-debug",
         "dbt-build",

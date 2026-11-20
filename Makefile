@@ -29,7 +29,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow metabase dashboards infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -54,6 +54,9 @@ airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait 
 
 metabase: env ## Start Metabase (after `make up`) and wait until it is healthy
 	$(COMPOSE) $(BI_PROFILE) up -d --wait metabase
+
+dashboards: ## Bootstrap Metabase (admin, warehouse as railfall_reader, schema sync)
+	$(PYTHON) -m railfall.bi.metabase bootstrap $(METABASE_ARGS)
 
 dag-run: ## Trigger a DAG and wait until it finishes (DAG=railfall_ingest DAG_ARGS=--conf '{...}')
 	$(PYTHON) -m railfall.orchestration.airflow_api $(DAG) $(DAG_ARGS)

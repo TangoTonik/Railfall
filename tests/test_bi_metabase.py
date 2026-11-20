@@ -1,0 +1,161 @@
+"""The Metabase bootstrap, against a scripted fake of the `/api` endpoints."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from railfall.bi.metabase import (
+    EXPECTED_TABLES,
+    MetabaseClient,
+    MetabaseError,
+    MetabaseSettings,
+    main,
+)
+
+
+class FakeMetabase:
+    """Answers like Metabase 0.52: health turns ok after `boot_polls`, setup works once
+    with the token, and synced tables appear `sync_polls` metadata calls after a sync."""
+
+    def __init__(self, *, boot_polls=0, sync_polls=1, tables=EXPECTED_TABLES):
+        self.boot_polls = boot_polls
+        self.sync_polls = sync_polls
+        self.warehouse_tables = list(tables)
+        self.users: dict[str, str] = {}
+        self.dbs: list[dict] = [{"id": 1, "name": "Sample Database", "engine": "h2"}]
+        self.synced: set[int] = set()
+        self.calls: list[tuple[str, str, dict | None, str | None]] = []
+
+    def __call__(self, method, path, body, session):
+        self.calls.append((method, path, body, session))
+        if path == "/health":
+            if self.boot_polls > 0:
+                self.boot_polls -= 1
+                return 503, {"status": "initializing", "progress": 0.4}
+            return 200, {"status": "ok"}
+        if path == "/session/properties":
+            props = {"has-user-setup": bool(self.users)}
+            if not self.users:
+                props["setup-token"] = "tok-123"
+            return 200, props
+        if method == "POST" and path == "/setup":
+            if self.users or body["token"] != "tok-123":
+                return 403, {"message": "The /api/setup route can only be used to create the first"}
+            self.users[body["user"]["email"]] = body["user"]["password"]
+            return 200, {"id": "sess-setup"}
+        if method == "POST" and path == "/session":
+            if self.users.get(body["username"]) != body["password"]:
+                return 401, {"errors": {"password": "did not match stored password"}}
+            return 200, {"id": "sess-login"}
+        if session is None:
+            return 401, "Unauthenticated"
+        if method == "GET" and path == "/database":
+            return 200, {"data": self.dbs, "total": len(self.dbs)}
+        if method == "POST" and path == "/database":
+            db = {"id": len(self.dbs) + 1, **body}
+            self.dbs.append(db)
+            return 200, db
+        if method == "PUT" and path.startswith("/database/"):
+            db_id = int(path.rsplit("/", 1)[1])
+            db = next(d for d in self.dbs if d["id"] == db_id)
+            db.update(body)
+            return 200, db
+        if method == "POST" and path.endswith("/sync_schema"):
+            self.synced.add(int(path.split("/")[2]))
+            return 200, {"status": "ok"}
+        if method == "GET" and "/metadata" in path:
+            db_id = int(path.split("/")[2])
+            if db_id not in self.synced or self.sync_polls > 0:
+                self.sync_polls -= 1
+                return 200, {"id": db_id, "tables": []}
+            tables = [{"schema": "marts", "name": t} for t in self.warehouse_tables]
+            tables.append({"schema": "staging", "name": "stg_sncf__stations"})
+            return 200, {"id": db_id, "tables": tables}
+        return 404, {"message": f"unscripted {method} {path}"}
+
+
+def _client(fake):
+    return MetabaseClient(fake, sleep=lambda _s: None)
+
+
+SETTINGS = MetabaseSettings(admin_password="pw-1", reader_password="reader-pw")
+
+
+def test_fresh_instance_creates_admin_and_registers_warehouse():
+    fake = FakeMetabase(boot_polls=2)
+    report = _client(fake).bootstrap(SETTINGS)
+
+    assert report.ok and report.created_admin and report.database_created
+    assert report.tables == sorted(EXPECTED_TABLES)  # staging is filtered out
+    db = fake.dbs[-1]
+    assert db["engine"] == "postgres"
+    assert db["details"]["user"] == "railfall_reader"
+    assert db["details"]["password"] == "reader-pw"
+    assert db["details"]["host"] == "postgres"
+    assert db["details"]["schema-filters-patterns"] == "marts"
+    setup = next(c for c in fake.calls if c[1] == "/setup")
+    assert setup[2]["prefs"]["allow_tracking"] is False
+
+
+def test_second_run_logs_in_and_updates_instead_of_duplicating():
+    fake = FakeMetabase()
+    client = _client(fake)
+    first = client.bootstrap(SETTINGS)
+    again = _client(fake).bootstrap(SETTINGS)
+
+    assert not again.created_admin and not again.database_created
+    assert again.database_id == first.database_id
+    assert sum(d["name"] == SETTINGS.warehouse_name for d in fake.dbs) == 1
+    assert sum(1 for c in fake.calls if c[0] == "POST" and c[1] == "/setup") == 1
+
+
+def test_wrong_admin_password_on_existing_instance_fails():
+    fake = FakeMetabase()
+    _client(fake).bootstrap(SETTINGS)
+    with pytest.raises(MetabaseError, match="HTTP 401"):
+        _client(fake).bootstrap(MetabaseSettings(admin_password="nope"))
+
+
+def test_missing_mart_is_reported_not_raised():
+    fake = FakeMetabase(tables=EXPECTED_TABLES[:-1])
+    clock = iter(range(0, 10_000, 100))
+    client = MetabaseClient(fake, sleep=lambda _s: None, clock=lambda: next(clock))
+    report = client.bootstrap(SETTINGS, sync_timeout_s=250)
+    assert not report.ok
+    assert report.missing == ["mart_punctuality_by_region_season"]
+
+
+def test_health_timeout_raises():
+    fake = FakeMetabase(boot_polls=10**6)
+    clock = iter(range(0, 10_000, 100))
+    client = MetabaseClient(fake, sleep=lambda _s: None, clock=lambda: next(clock))
+    with pytest.raises(MetabaseError, match="not healthy"):
+        client.bootstrap(SETTINGS, health_timeout_s=300)
+
+
+def test_settings_from_env():
+    s = MetabaseSettings.from_env(
+        {
+            "METABASE_PORT": "3100",
+            "METABASE_ADMIN_EMAIL": "ops@example.org",
+            "TF_VAR_warehouse_reader_password": "from-tf",
+            "POSTGRES_DB": "dwh",
+        }
+    )
+    assert s.url == "http://localhost:3100"
+    assert s.admin_email == "ops@example.org"
+    assert s.reader_password == "from-tf"
+    assert s.warehouse_db == "dwh"
+    assert "from-tf" not in repr(s)
+
+
+def test_main_writes_report(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("METABASE_ADMIN_PASSWORD", "pw-1")
+    out = tmp_path / "metabase.json"
+    rc = main(["bootstrap", "--report", str(out)], client=_client(FakeMetabase()))
+    assert rc == 0
+    payload = json.loads(out.read_text())
+    assert payload["ok"] and payload["missing"] == []
+    assert "[  ok] Metabase" in capsys.readouterr().out
