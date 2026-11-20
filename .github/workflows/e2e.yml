@@ -585,6 +585,25 @@ jobs:
           path: dbt-docs-bundle/
           if-no-files-found: ignore
 
+      - name: Metabase boots on its Terraform-managed database
+        # Real image, real Postgres: `make metabase` waits for /api/health, and
+        # Metabase's own tables must land in the `metabase` database (not an
+        # H2 file in the container, nor the warehouse).
+        run: |
+          make metabase
+          curl -fsS "http://localhost:${METABASE_PORT:-3000}/api/health" | jq -e '.status == "ok"'
+          tables=$(docker compose exec -T postgres psql -U rail -d metabase -tAc \
+            "select count(*) from information_schema.tables where table_name = 'core_user'")
+          test "$tables" = 1
+          leaked=$(docker compose exec -T postgres psql -U rail -d warehouse -tAc \
+            "select count(*) from information_schema.tables where table_name = 'core_user'")
+          test "$leaked" = 0
+
+      - name: Stop Metabase before the restart
+        # Like Airflow, a profile container would keep the network busy during
+        # `compose down`. Its state stays in Postgres.
+        run: docker compose --profile bi rm --stop --force metabase
+
       - name: Re-apply is a no-op
         run: |
           make infra
@@ -609,8 +628,8 @@ jobs:
 
       - name: Dump service logs
         if: failure()
-        run: docker compose --profile airflow logs --no-color
+        run: docker compose --profile airflow --profile bi logs --no-color
 
       - name: Tear down
         if: always()
-        run: docker compose --profile airflow down -v
+        run: docker compose --profile airflow --profile bi down -v

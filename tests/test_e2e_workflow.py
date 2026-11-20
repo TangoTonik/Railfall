@@ -324,3 +324,18 @@ def test_docs_are_generated_strictly_and_the_readme_catalog_checked(steps):
         and s["with"]["name"] == "dbt-docs"
     )
     assert upload.get("if") == "always()" and steps.index(upload) > bundle
+
+
+def test_metabase_boots_for_real_on_its_own_database(steps):
+    boot = _index(steps, "make metabase")
+    assert boot > _index(steps, "make --no-print-directory dbt-build"), "marts must exist first"
+    run = steps[boot]["run"]
+    assert "/api/health" in run
+    assert "-d metabase" in run and "-d warehouse" in run, "state location must be asserted"
+
+
+def test_metabase_is_removed_before_the_restart_and_torn_down(steps):
+    rm = _index(steps, "--profile bi rm --stop --force metabase")
+    assert _index(steps, "make metabase") < rm < _index(steps, "docker compose down\n")
+    assert steps[rm]["run"].split("--force", 1)[1].split() == ["metabase"]
+    assert "--profile bi" in steps[-1]["run"] and "down -v" in steps[-1]["run"]
