@@ -339,3 +339,13 @@ def test_metabase_is_removed_before_the_restart_and_torn_down(steps):
     assert _index(steps, "make metabase") < rm < _index(steps, "docker compose down\n")
     assert steps[rm]["run"].split("--force", 1)[1].split() == ["metabase"]
     assert "--profile bi" in steps[-1]["run"] and "down -v" in steps[-1]["run"]
+
+
+def test_metabase_bootstrap_runs_twice_on_the_live_stack(steps):
+    boot = _index(steps, "make metabase")
+    bootstrap = _index(steps, "make --no-print-directory dashboards")
+    assert boot < bootstrap < _index(steps, "--profile bi rm --stop --force metabase")
+    run = steps[bootstrap]["run"]
+    assert run.count("make --no-print-directory dashboards") == 2, "idempotency needs a rerun"
+    assert "(.database_created | not)" in run
+    assert "metabase_database" in run

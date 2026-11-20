@@ -599,6 +599,23 @@ jobs:
             "select count(*) from information_schema.tables where table_name = 'core_user'")
           test "$leaked" = 0
 
+      - name: Metabase is bootstrapped as code, idempotently
+        # No setup wizard: the admin is created with the one-time setup token,
+        # the warehouse is registered as railfall_reader (marts only) and synced
+        # until every dashboard mart is visible. A second run must log in and
+        # update in place: still exactly one warehouse connection.
+        run: |
+          make --no-print-directory dashboards METABASE_ARGS="--report metabase-1.json"
+          make --no-print-directory dashboards METABASE_ARGS="--report metabase-2.json"
+          jq -e '.ok and .created_admin and .database_created and (.missing == [])' metabase-1.json
+          jq -e '.ok and (.created_admin | not) and (.database_created | not)' metabase-2.json
+          jq -e --slurpfile a metabase-1.json '.database_id == $a[0].database_id' metabase-2.json
+          jq -e '.tables | index("mart_punctuality_by_weather") != null' metabase-2.json
+          dbs=$(docker compose exec -T postgres psql -U rail -d metabase -tAc \
+            "select count(*) from metabase_database where engine = 'postgres'
+               and details::text like '%railfall_reader%'")
+          test "$dbs" = 1
+
       - name: Stop Metabase before the restart
         # Like Airflow, a profile container would keep the network busy during
         # `compose down`. Its state stays in Postgres.
