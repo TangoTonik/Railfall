@@ -590,3 +590,45 @@ rewrites it, a unit test (when dbt is installed) and e2e (against the manifest
 of the live run) fail when it is stale. Writing only between markers keeps the
 rest of the README hand-edited, and missing markers are an error, never a
 silent append.
+
+## Day 16 — Metabase with dashboards provisioned as code
+
+**Metabase, on Postgres, managed by Terraform.** Metabase is free, runs from
+one official image and talks to Postgres natively; Superset would add Redis,
+Celery workers and its own image build for no gain at this size. Its
+application database is a `metabase` database and role that Terraform creates
+next to the warehouse, not the default H2 file inside the container: state
+survives `make down`, and e2e asserts Metabase's tables are there and not in
+the warehouse. Metabase reads the warehouse as `railfall_reader`, restricted to
+`marts`, so a dashboard can never see raw or staging data.
+
+**Bootstrap through the REST API, not a database dump.** Exports of Metabase's
+application database are version-specific and unreviewable. The bootstrap uses
+the documented API instead: the one-time setup token creates the admin on a
+fresh instance, later runs log in; the warehouse connection is found by name and
+updated in place; the sync is awaited until every mart a dashboard reads is
+visible. Standard library only, like the Airflow client, so it runs on the CI
+host without extra dependencies.
+
+**Specs are JSON + plain SQL files.** One directory per dashboard: the JSON
+says how to show things (cards, display, grid), the SQL says what to show and
+is diffable in review. Specs are validated before any API call (one read-only
+statement, the tables in the SQL equal the ones declared, cards fit the grid and
+do not overlap), so a typo fails in unit tests rather than half-way through a
+run. Questions are matched by name inside the Railfall collection and updated
+in place; existing dashcard ids are reused so a re-run causes no churn; cards no
+spec claims are archived rather than deleted, keeping their history. The spec is
+the source of truth: UI edits to provisioned items are overwritten, by design.
+
+**A dashboard that renders is not a dashboard that works.** After provisioning,
+every card is executed by Metabase against the real marts; a failed query or an
+empty result makes the command exit 1 and names the card. e2e runs the whole
+bootstrap twice and requires the second run to create nothing, archive nothing
+and keep the same card and dashcard ids, checked both in the JSON report and in
+Metabase's application database.
+
+**Fail before Metabase when dbt and the specs disagree.** `make
+dashboards-check` validates the specs offline and, given dbt's `manifest.json`,
+requires every table they read to be a relation dbt materialises in `marts`.
+e2e runs it on the manifest of the live run, before Metabase boots, so renaming a
+mart breaks the build with the card that reads it instead of an empty tile.

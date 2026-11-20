@@ -2,7 +2,7 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 15 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> 🚧 Work in progress — day 16 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
 ## Architecture (target)
 
@@ -23,6 +23,7 @@
 | Modeling | dbt | Versioned, tested SQL transformations |
 | Orchestration | Airflow | Industry standard scheduler |
 | Data quality | dbt tests, Great Expectations | dbt guards the models it builds, GX the raw load underneath |
+| BI | Metabase (open source) | Free, self-hosted; dashboards provisioned from JSON + SQL through its REST API |
 | Infra | Docker Compose, Terraform | Reproducible, infrastructure as code |
 | CI | GitHub Actions | Lint + tests on every push |
 
@@ -68,6 +69,9 @@ make dbt-docs-bundle DOCS_ARGS=--strict  # lineage, doc coverage, schema drift, 
 make readme-catalog # regenerate the data catalog below from `dbt parse` (no database)
 make airflow  # build the Airflow image, migrate its metadata DB, start webserver + scheduler
 make dag-run DAG=railfall_pipeline  # trigger a DAG over the REST API and wait for it
+make metabase     # start Metabase on its Terraform-managed database, wait until healthy
+make dashboards   # bootstrap Metabase and provision bi/dashboards (idempotent)
+make dashboards-check DASHBOARDS_ARGS="--manifest dbt/target/manifest.json"  # offline spec check
 make down     # stop (keeps data); `make clean` also deletes the volumes
 ```
 
@@ -77,6 +81,7 @@ make down     # stop (keeps data); `make clean` also deletes the volumes
 | MinIO S3 API | http://localhost:9000 | `railfall` / `railfall-secret` |
 | MinIO console | http://localhost:9001 | same as above |
 | Airflow UI / REST API (`make airflow`) | http://localhost:8080 | `admin` / `admin` |
+| Metabase (`make metabase`) | http://localhost:3000 | `admin@railfall.local` / `railfall-metabase1` |
 
 Those are the admin accounts, used only by Terraform. Terraform
 (`infra/terraform`) provisions what the pipelines actually connect with:
@@ -646,6 +651,31 @@ flowchart LR
 
 <!-- catalog:end -->
 
+### Dashboards (Metabase)
+
+Metabase runs in the `bi` Compose profile and keeps its own state in a
+`metabase` Postgres database that Terraform creates, so dashboards survive a
+`make down`. Nothing is clicked: `make dashboards` creates the admin with the
+one-time setup token (or logs in), registers the warehouse as
+`railfall_reader` restricted to `marts`, waits for the sync, then provisions
+every spec under `bi/dashboards/`:
+
+```
+bi/dashboards/weather_impact/
+  dashboard.json          name, collection, cards, 24-column grid layout
+  overall_punctuality.sql one read-only native query per card, on marts.* only
+  ...
+```
+
+Specs are validated before Metabase is called (single read-only statement,
+declared tables match the SQL, no overlapping cards). Questions are matched by
+name and updated in place, cards a spec no longer claims are archived, and
+every card is then run: a failed or empty card fails the command. The spec is
+the source of truth, so UI edits to provisioned items are overwritten.
+`make dashboards-check` validates the specs offline and, with a dbt manifest,
+that every table they read is a mart dbt still builds. In e2e all of this runs
+twice on the real marts and must leave the same card and dashcard ids.
+
 ## How this project is built
 
 This project is built with an AI pair-programmer (Claude) in a deliberate,
@@ -658,6 +688,7 @@ Every design choice is logged in [docs/DECISIONS.md](docs/DECISIONS.md).
 src/railfall/       Python package (config, ingestion, Spark silver jobs, warehouse load, dbt runner)
 dbt/                dbt project: raw sources, staging, star schema (marts), seeds, tests
 dags/               Airflow DAGs (thin wiring over railfall.orchestration)
+bi/dashboards/      Metabase dashboards as code: one JSON spec + SQL files per dashboard
 tests/              Unit tests (pytest)
 infra/terraform/    Terraform: lake bucket, IAM, warehouse schemas and roles
 infra/minio/        Source build of the pinned MinIO image
