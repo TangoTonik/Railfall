@@ -42,7 +42,7 @@ of their endpoints.
 - [x] Day 15 — dbt docs + lineage published as a CI artifact; data catalog in README
 
 ## Week 4 · Delivery & polish
-- [ ] Day 16 — Metabase in Docker Compose with dashboards provisioned as code
+- [x] Day 16 — Metabase in Docker Compose with dashboards provisioned as code
 - [ ] Day 17 — Statistical analysis on the real marts: does bad weather significantly lower punctuality?
 - [ ] Day 18 — Monitoring (run metrics, freshness checks) + optional LLM anomaly summaries (off by default)
 - [ ] Day 19 — Hardening: retries, failure scenarios tested in e2e, `make up` one-command start
