@@ -1,0 +1,80 @@
+{
+  "name": "Weather impact on TGV punctuality",
+  "description": "SNCF AQST monthly punctuality joined with Météo-France daily weather. Provisioned by `make dashboards`; edits made in the UI are overwritten on the next run.",
+  "collection": "Railfall",
+  "cards": [
+    {
+      "key": "overall_punctuality",
+      "name": "Arrival punctuality (all TGV routes)",
+      "description": "Trains arriving on time over trains run, all route-months.",
+      "display": "scalar",
+      "sql": "overall_punctuality.sql",
+      "tables": ["fact_route_month"],
+      "visualization_settings": {
+        "column_settings": {"[\"name\",\"arrival_punctuality_rate\"]": {"number_style": "percent", "decimals": 1}}
+      },
+      "layout": {"row": 0, "col": 0, "size_x": 6, "size_y": 4}
+    },
+    {
+      "key": "monthly_trend",
+      "name": "Punctuality and cancellations by month",
+      "description": "National rates per month, rebuilt from counts.",
+      "display": "line",
+      "sql": "monthly_trend.sql",
+      "tables": ["fact_route_month"],
+      "visualization_settings": {
+        "graph.dimensions": ["month"],
+        "graph.metrics": ["arrival_punctuality_rate", "cancellation_rate"],
+        "graph.y_axis.title_text": "Rate"
+      },
+      "layout": {"row": 0, "col": 6, "size_x": 18, "size_y": 6}
+    },
+    {
+      "key": "punctuality_by_weather",
+      "name": "Punctuality in adverse vs normal months",
+      "description": "Arrival punctuality for route-months hit or not hit by rain, wind or frost.",
+      "display": "bar",
+      "sql": "punctuality_by_weather.sql",
+      "tables": ["mart_punctuality_by_weather"],
+      "visualization_settings": {
+        "graph.dimensions": ["weather_factor", "exposure"],
+        "graph.metrics": ["arrival_punctuality_rate"]
+      },
+      "layout": {"row": 6, "col": 0, "size_x": 12, "size_y": 7}
+    },
+    {
+      "key": "weather_gap",
+      "name": "Punctuality points lost per weather factor",
+      "description": "Adverse minus normal arrival punctuality, in percentage points.",
+      "display": "table",
+      "sql": "weather_gap.sql",
+      "tables": ["mart_punctuality_by_weather"],
+      "visualization_settings": {},
+      "layout": {"row": 6, "col": 12, "size_x": 12, "size_y": 7}
+    },
+    {
+      "key": "punctuality_by_intensity",
+      "name": "Punctuality by weather intensity",
+      "description": "Does punctuality keep falling as it rains, blows or freezes harder?",
+      "display": "bar",
+      "sql": "punctuality_by_intensity.sql",
+      "tables": ["mart_punctuality_by_weather_intensity"],
+      "visualization_settings": {
+        "graph.dimensions": ["band"],
+        "graph.metrics": ["arrival_punctuality_rate"],
+        "graph.x_axis.title_text": "Intensity band"
+      },
+      "layout": {"row": 13, "col": 0, "size_x": 24, "size_y": 7}
+    },
+    {
+      "key": "region_season_gaps",
+      "name": "Worst region × season × weather combinations",
+      "description": "Only cells where both adverse and normal route-months exist.",
+      "display": "table",
+      "sql": "region_season_gaps.sql",
+      "tables": ["mart_punctuality_by_region_season"],
+      "visualization_settings": {},
+      "layout": {"row": 20, "col": 0, "size_x": 24, "size_y": 8}
+    }
+  ]
+}
