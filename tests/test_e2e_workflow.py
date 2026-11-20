@@ -343,9 +343,17 @@ def test_metabase_is_removed_before_the_restart_and_torn_down(steps):
 
 def test_metabase_bootstrap_runs_twice_on_the_live_stack(steps):
     boot = _index(steps, "make metabase")
-    bootstrap = _index(steps, "make --no-print-directory dashboards")
+    bootstrap = _index(steps, "make --no-print-directory dashboards METABASE_ARGS")
     assert boot < bootstrap < _index(steps, "--profile bi rm --stop --force metabase")
     run = steps[bootstrap]["run"]
-    assert run.count("make --no-print-directory dashboards") == 2, "idempotency needs a rerun"
+    reruns = run.count("make --no-print-directory dashboards METABASE_ARGS")
+    assert reruns == 2, "idempotency needs a rerun"
     assert "(.database_created | not)" in run
     assert "metabase_database" in run
+
+
+def test_dashboard_specs_are_checked_against_the_live_manifest(steps):
+    check = _index(steps, "make --no-print-directory dashboards-check")
+    assert _index(steps, "make --no-print-directory dbt-docs ") < check, "manifest must exist"
+    assert check < _index(steps, "make metabase"), "fail before Metabase is booted"
+    assert "--manifest dbt/target/manifest.json" in steps[check]["run"]

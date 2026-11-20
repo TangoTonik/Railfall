@@ -585,6 +585,14 @@ jobs:
           path: dbt-docs-bundle/
           if-no-files-found: ignore
 
+      - name: Dashboard specs only read marts dbt built on the live run
+        # Offline check against the manifest of this very run: a card reading a
+        # mart dbt no longer builds fails here, before Metabase is even started.
+        run: |
+          make --no-print-directory dashboards-check \
+            DASHBOARDS_ARGS="--manifest dbt/target/manifest.json" | tee dashboards-check.txt
+          grep -q "relations dbt builds in marts" dashboards-check.txt
+
       - name: Metabase boots on its Terraform-managed database
         # Real image, real Postgres: `make metabase` waits for /api/health, and
         # Metabase's own tables must land in the `metabase` database (not an
