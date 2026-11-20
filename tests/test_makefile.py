@@ -39,6 +39,7 @@ def test_help_lists_documented_targets():
         "silver",
         "load",
         "airflow",
+        "metabase",
         "dag-run",
         "dbt-debug",
         "dbt-build",

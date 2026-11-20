@@ -191,3 +191,31 @@ def test_airflow_timetable_runs_can_be_switched_off(compose):
     env = compose["services"]["airflow-scheduler"]["environment"]
     assert env["AIRFLOW__SCHEDULER__USE_JOB_SCHEDULE"] == "${AIRFLOW_USE_JOB_SCHEDULE:-true}"
     assert _env_example()["AIRFLOW_USE_JOB_SCHEDULE"] == "true"
+
+
+def test_metabase_sits_behind_the_bi_profile(compose):
+    """Its application database comes from Terraform, so plain `up` must not start it."""
+    assert compose["services"]["metabase"]["profiles"] == ["bi"]
+
+
+def test_metabase_keeps_its_state_in_its_own_postgres_database(compose):
+    svc = compose["services"]["metabase"]
+    env = svc["environment"]
+    assert env["MB_DB_TYPE"] == "postgres", "the embedded H2 file would lose dashboards"
+    assert env["MB_DB_HOST"] == "postgres"
+    assert env["MB_DB_DBNAME"] == "${METABASE_DB_NAME:-metabase}"
+    assert "${POSTGRES_USER" not in env["MB_DB_USER"], "must not log in as the Postgres admin"
+    assert svc["depends_on"]["postgres"]["condition"] == "service_healthy"
+
+
+def test_metabase_has_a_healthcheck_and_no_phone_home(compose):
+    svc = compose["services"]["metabase"]
+    assert "/api/health" in " ".join(svc["healthcheck"]["test"])
+    assert svc["environment"]["MB_ANON_TRACKING_ENABLED"] == "false"
+    assert svc["environment"]["MB_CHECK_FOR_UPDATES"] == "false"
+
+
+def test_metabase_db_password_matches_terraform():
+    env = _env_example()
+    assert env["METABASE_DB_PASSWORD"] == env["TF_VAR_metabase_db_password"]
+    assert env["METABASE_DB_NAME"] != env["POSTGRES_DB"]

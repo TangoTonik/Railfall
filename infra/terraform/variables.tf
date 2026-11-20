@@ -110,3 +110,21 @@ variable "airflow_db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "metabase_db_name" {
+  description = "Database holding the Metabase application state (separate from the warehouse)."
+  type        = string
+  default     = "metabase"
+}
+
+variable "metabase_db_user" {
+  description = "Role Metabase connects as for its own state; owns only the Metabase database."
+  type        = string
+  default     = "metabase"
+}
+
+variable "metabase_db_password" {
+  description = "Password of the Metabase application-database role."
+  type        = string
+  sensitive   = true
+}

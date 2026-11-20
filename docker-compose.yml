@@ -138,6 +138,37 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Metabase (BI). Behind the `bi` profile for the same reason as Airflow: its
+  # application database and role are created by Terraform (`make infra`).
+  # Dashboards are provisioned as code through its REST API (`make dashboards`).
+  metabase:
+    image: metabase/metabase:v0.52.4
+    profiles: ["bi"]
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: ${METABASE_DB_NAME:-metabase}
+      MB_DB_USER: ${METABASE_DB_USER:-metabase}
+      MB_DB_PASS: ${METABASE_DB_PASSWORD:-metabase-local}
+      MB_SITE_NAME: Railfall
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_CHECK_FOR_UPDATES: "false"
+      MB_JETTY_PORT: "3000"
+      JAVA_TIMEZONE: Europe/Paris
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # The lake bucket, pipeline user and warehouse schemas/roles are provisioned
   # by Terraform (infra/terraform, `make infra`), not by a compose job.
 

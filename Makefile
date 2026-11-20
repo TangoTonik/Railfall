@@ -20,12 +20,16 @@ TF_VAR_postgres_db ?= $(or $(POSTGRES_DB),warehouse)
 TF_VAR_lake_bucket ?= $(or $(LAKE_BUCKET),railfall-lake)
 TF_VAR_airflow_db_name ?= $(or $(AIRFLOW_DB_NAME),airflow)
 TF_VAR_airflow_db_user ?= $(or $(AIRFLOW_DB_USER),airflow)
+TF_VAR_metabase_db_name ?= $(or $(METABASE_DB_NAME),metabase)
+TF_VAR_metabase_db_user ?= $(or $(METABASE_DB_USER),metabase)
 
 # Airflow services live behind a compose profile (they need `make infra` first).
 AIRFLOW_PROFILE := --profile airflow
+# Metabase also needs `make infra` first (Terraform creates its database).
+BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow metabase infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -47,6 +51,9 @@ airflow-build: env ## Build the Airflow image (official image + the railfall pac
 
 airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait until healthy
 	$(COMPOSE) $(AIRFLOW_PROFILE) up -d --wait airflow-webserver airflow-scheduler
+
+metabase: env ## Start Metabase (after `make up`) and wait until it is healthy
+	$(COMPOSE) $(BI_PROFILE) up -d --wait metabase
 
 dag-run: ## Trigger a DAG and wait until it finishes (DAG=railfall_ingest DAG_ARGS=--conf '{...}')
 	$(PYTHON) -m railfall.orchestration.airflow_api $(DAG) $(DAG_ARGS)
@@ -132,16 +139,16 @@ weather-report: ## Print the weather-impact marts as Markdown, read as railfall_
 	$(PYTHON) -m railfall.transform.report $(REPORT_ARGS)
 
 logs: ## Follow service logs
-	$(COMPOSE) $(AIRFLOW_PROFILE) logs -f
+	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) logs -f
 
 ps: ## Show service status
-	$(COMPOSE) $(AIRFLOW_PROFILE) ps
+	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) ps
 
 down: ## Stop the stack (keeps data volumes)
-	$(COMPOSE) $(AIRFLOW_PROFILE) down
+	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) down
 
 clean: ## Stop the stack and delete its data volumes
-	$(COMPOSE) $(AIRFLOW_PROFILE) down -v
+	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) down -v
 
 lint: ## Run ruff lint + format check
 	ruff check .

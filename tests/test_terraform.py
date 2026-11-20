@@ -221,3 +221,31 @@ def test_public_cannot_connect_to_airflow_db(airflow_resources):
     assert grant["role"] == "public"
     assert grant["object_type"] == "database"
     assert grant["privileges"] == []
+
+
+@pytest.fixture(scope="module")
+def metabase_resources() -> dict[str, dict]:
+    return _resources(_load("metabase.tf"))
+
+
+def test_metabase_state_lives_outside_the_warehouse_db(metabase_resources, variables):
+    db = metabase_resources["postgresql_database.metabase"]
+    assert db["name"] == "${var.metabase_db_name}"
+    assert db["owner"] == "${postgresql_role.metabase.name}"
+    names = {variables[v]["default"] for v in ("postgres_db", "airflow_db_name")}
+    assert variables["metabase_db_name"]["default"] not in names
+
+
+def test_metabase_role_has_no_admin_rights(metabase_resources, variables):
+    role = metabase_resources["postgresql_role.metabase"]
+    assert role["login"] is True
+    for flag in ("superuser", "create_database", "create_role"):
+        assert role[flag] is False, flag
+    assert role["password"] == "${var.metabase_db_password}"
+    assert variables["metabase_db_password"]["sensitive"] is True
+    assert "default" not in variables["metabase_db_password"]
+
+
+def test_public_cannot_connect_to_metabase_db(metabase_resources):
+    grant = metabase_resources["postgresql_grant.metabase_revoke_public"]
+    assert (grant["role"], grant["object_type"], grant["privileges"]) == ("public", "database", [])

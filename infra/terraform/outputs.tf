@@ -30,3 +30,11 @@ output "airflow_database" {
     owner = postgresql_database.airflow.owner
   }
 }
+
+output "metabase_database" {
+  description = "Metabase application database and the role that owns it."
+  value = {
+    name  = postgresql_database.metabase.name
+    owner = postgresql_database.metabase.owner
+  }
+}
