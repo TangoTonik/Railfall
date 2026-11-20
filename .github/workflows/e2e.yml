@@ -606,6 +606,8 @@ jobs:
         # update in place: still exactly one warehouse connection.
         run: |
           make --no-print-directory dashboards METABASE_ARGS="--report metabase-1.json"
+          docker compose exec -T postgres psql -U rail -d metabase -tAc \
+            "select id from report_dashboardcard order by id" > dashcards-1.txt
           make --no-print-directory dashboards METABASE_ARGS="--report metabase-2.json"
           jq -e '.ok and .created_admin and .database_created and (.missing == [])' metabase-1.json
           jq -e '.ok and (.created_admin | not) and (.database_created | not)' metabase-2.json
@@ -615,6 +617,43 @@ jobs:
             "select count(*) from metabase_database where engine = 'postgres'
                and details::text like '%railfall_reader%'")
           test "$dbs" = 1
+
+      - name: Dashboards are provisioned as code and every card returns rows
+        # The spec under bi/dashboards is the source of truth. Run 1 creates every
+        # card, run 2 updates the same questions in place (same card and dashcard
+        # ids, nothing archived). Checked twice: in the bootstrap report and
+        # straight in Metabase's application database. Every card was executed
+        # by Metabase against the real marts and must return at least one row.
+        run: |
+          spec=bi/dashboards/weather_impact/dashboard.json
+          n=$(jq '.cards | length' "$spec")
+          name=$(jq -r '.name' "$spec")
+          jq -e --arg name "$name" --argjson n "$n" '
+            [.dashboards[] | select(.name == $name)] | length == 1 and
+            (.[0] | .ok and .dashboard_created and (.created | length) == $n
+              and .archived == [] and .failed == {} and .empty == [])' metabase-1.json
+          jq -e --arg name "$name" --argjson n "$n" '
+            .dashboards[] | select(.name == $name) | .ok and (.dashboard_created | not)
+              and .created == [] and (.updated | length) == $n and .archived == []
+              and ([.row_counts[]] | length == $n and all(. > 0))' metabase-2.json
+          jq -e --slurpfile a metabase-1.json \
+            '.dashboards[0].cards == $a[0].dashboards[0].cards
+             and .dashboards[0].dashboard_id == $a[0].dashboards[0].dashboard_id' metabase-2.json
+          jq -r '.dashboards[0].row_counts | to_entries[] | "\(.key): \(.value) rows"' metabase-2.json
+
+          q() { docker compose exec -T postgres psql -U rail -d metabase -tAc "$1"; }
+          test "$(q "select count(*) from collection
+                     where name = 'Railfall' and not archived and personal_owner_id is null")" = 1
+          dash_id=$(jq '.dashboards[0].dashboard_id' metabase-2.json)
+          test "$(q "select count(*) from report_dashboard
+                     where name = \$\$${name}\$\$ and not archived")" = 1
+          test "$(q "select count(*) from report_card c join collection k on k.id = c.collection_id
+                     where k.name = 'Railfall' and not c.archived
+                       and c.query_type = 'native'")" = "$n"
+          test "$(q "select count(*) from report_dashboardcard
+                     where dashboard_id = ${dash_id}")" = "$n"
+          q "select id from report_dashboardcard order by id" > dashcards-2.txt
+          diff dashcards-1.txt dashcards-2.txt
 
       - name: Stop Metabase before the restart
         # Like Airflow, a profile container would keep the network busy during
