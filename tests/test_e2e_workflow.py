@@ -295,6 +295,22 @@ def test_weather_report_reads_the_rebuilt_marts_as_the_reader(steps):
     assert "GITHUB_STEP_SUMMARY" in runs[report]
 
 
+def test_weather_stats_run_on_the_real_marts_after_the_report(steps):
+    runs = [s.get("run", "") for s in steps]
+    report = _index(steps, "make --no-print-directory weather-report")
+    stats = _index(steps, "make --no-print-directory weather-stats")
+    assert report < stats < _index(steps, "docker compose down\n")
+    assert '[.tests[].factor] == ["rain", "wind", "frost"]' in runs[stats]
+    assert '.verdict != "not testable"' in runs[stats], "every factor must be testable"
+    assert "--report weather-stats.json" in runs[stats]
+    assert "GITHUB_STEP_SUMMARY" in runs[stats]
+
+
+def test_e2e_installs_the_analysis_extra(steps):
+    install = next(s["run"] for s in steps if s.get("run", "").startswith("pip install -e"))
+    assert "analysis" in install
+
+
 def test_quality_results_reach_the_summary_and_are_kept_as_an_artifact(steps):
     runs = [s.get("run", "") for s in steps]
     gate = _index(steps, "--markdown quality-1.md")

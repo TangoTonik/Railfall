@@ -48,6 +48,7 @@ def test_help_lists_documented_targets():
         "verify-staging",
         "verify-marts",
         "weather-report",
+        "weather-stats",
         "down",
     )
     for target in (*targets, "clean"):
@@ -180,3 +181,8 @@ def test_verify_marts_checks_the_marts_layer():
 def test_weather_report_reads_the_marts_as_the_reader():
     out = _make("-n", "weather-report", "PYTHON=python", "REPORT_ARGS=--out w.md")
     assert out.strip() == "python -m railfall.transform.report --out w.md"
+
+
+def test_weather_stats_runs_the_significance_tests():
+    out = _make("-n", "weather-stats", "PYTHON=python", "STATS_ARGS=--report s.json")
+    assert out.strip() == "python -m railfall.analysis.weather --report s.json"

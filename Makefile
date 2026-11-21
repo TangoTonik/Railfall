@@ -29,7 +29,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report logs ps down \
+.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -143,6 +143,9 @@ verify-marts: ## Check the marts: tables, unique grain, facts match sources, tra
 
 weather-report: ## Print the weather-impact marts as Markdown, read as railfall_reader
 	$(PYTHON) -m railfall.transform.report $(REPORT_ARGS)
+
+weather-stats: ## Test whether rain / wind / frost significantly lower punctuality
+	$(PYTHON) -m railfall.analysis.weather $(STATS_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) logs -f

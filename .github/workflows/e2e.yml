@@ -38,7 +38,7 @@ jobs:
           java-version: "17"
 
       - name: Install railfall (with Spark, dbt and Great Expectations)
-        run: pip install -e ".[spark,dbt,quality]"
+        run: pip install -e ".[spark,dbt,quality,analysis]"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -538,6 +538,20 @@ jobs:
             and ([.intensity[] | select(.is_baseline)] | length == 3)
             and (.intensity | all(.route_months > 0))' weather-report.json
           cat weather-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Weather significance tests on the real marts
+        # Stratified permutation test + route bootstrap per factor, read as
+        # railfall_reader. Asserts the test actually ran on real data (every
+        # factor testable, enough route-months), not what the verdict is.
+        run: |
+          make --no-print-directory weather-stats \
+            STATS_ARGS="--out weather-stats.md --report weather-stats.json"
+          jq -e '.ok and .route_months >= 100 and .routes >= 5
+            and ([.tests[].factor] == ["rain", "wind", "frost"])
+            and (.tests | all(.strata_used > 0 and .p_value != null
+              and .p_adjusted != null and .ci_low <= .ci_high))
+            and (.tests | all(.verdict != "not testable"))' weather-stats.json
+          cat weather-stats.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: dbt docs generate on the live warehouse
         # The catalog is introspected from Postgres as the transformer role: a
