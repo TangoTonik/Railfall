@@ -64,6 +64,7 @@ make verify-staging # staging views vs raw: row counts, unique non-null grain
 make dbt-build DBT_ARGS="--select departments marts"  # seed + star schema and its tests
 make verify-marts   # marts: tables, unique grain, facts keep every row, trains reconcile
 make weather-report # the weather-impact marts as Markdown, read as railfall_reader
+make weather-stats  # significance tests: does bad weather lower punctuality? (by season, dose-response)
 make dbt-docs       # dbt docs generate: manifest + catalog introspected from Postgres
 make dbt-docs-bundle DOCS_ARGS=--strict  # lineage, doc coverage, schema drift, catalog.md
 make readme-catalog # regenerate the data catalog below from `dbt parse` (no database)
@@ -243,6 +244,27 @@ either end stay in `int_route_month_weather` but are left out of the
 comparisons. `make weather-report` reads the three marts as `railfall_reader`
 (the dashboards' role) and prints headlines, the dose-response table and the
 worst region × season cells; e2e appends it to the job summary.
+
+#### Statistical analysis (`railfall.analysis`)
+
+The marts show gaps; `make weather-stats` says whether they are real. It reads
+the route-month panel from `int_route_month_weather` as `railfall_reader` and,
+per factor (rain, wind, frost):
+
+| Check | Method | Guards against |
+|---|---|---|
+| Stratified gap | CMH-weighted risk difference inside route × service × season | busy, unpunctual routes that happen to be rainy (Simpson's paradox) |
+| p-value | permutation test, adverse flags shuffled within strata | normal-theory assumptions on shares |
+| Confidence interval | bootstrap resampling whole routes | route-months of one route not being independent |
+| Multiple testing | Benjamini-Hochberg across the 3 factors (and across season cells) | one "significant" factor out of many by chance |
+| By season | the same test inside each season | a winter-only frost effect diluted by summer |
+| Dose-response | within-stratum slope on rain ratio / strong-wind days / frost days | a binary gap driven by something other than the weather |
+
+Each factor gets a plain-words verdict (*lowers punctuality*, *raises
+punctuality*, *no significant effect*, *not testable*) and the slope is read
+against it (*supported*, *unsupported*, *contradicted*). The output is Markdown
+plus a JSON report; e2e runs it on the real marts, checks every factor was
+testable, and appends the result to the job summary. Seeded, so reruns agree.
 
 ### Data quality
 

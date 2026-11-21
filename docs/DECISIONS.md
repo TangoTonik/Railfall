@@ -632,3 +632,49 @@ dashboards-check` validates the specs offline and, given dbt's `manifest.json`,
 requires every table they read to be a relation dbt materialises in `marts`.
 e2e runs it on the manifest of the live run, before Metabase boots, so renaming a
 mart breaks the build with the card that reads it instead of an empty tile.
+
+## Day 17 — Is the weather effect statistically real?
+
+**Route-months, not trains, are the unit of evidence.** The marts compare
+millions of trains, so any gap would look "significant" under a binomial test.
+But trains of one route in one month share everything (rolling stock, works,
+strikes); the honest sample is the route-month, and even those are clustered
+by route. Every test reads one row per route × service × month from
+`int_route_month_weather`, restricted to the population the marts compare
+(weather at one end at least, trains run, on-time count known).
+
+**Stratify before comparing.** The pooled gap the dashboards show mixes routes:
+if wet months fall more often on long, already late routes, rain looks guilty
+for the route's own lateness. The headline number is a Cochran-Mantel-Haenszel
+weighted risk difference inside route × service × season strata, so a factor is
+only credited with differences between months of the same route and season.
+The pooled gap stays in the report next to it, because the distance between the
+two is itself a finding.
+
+**Permutation p-values and a route-cluster bootstrap, no distributional
+assumptions.** Adverse flags are shuffled within strata (the null keeps each
+stratum's mix), and the CI resamples whole routes, which respects the
+clustering a naive bootstrap ignores. Pure numpy, seeded (17 in CI), so the
+same marts always give the same verdict and the e2e summary is reproducible.
+scipy/statsmodels were not needed for this and stay out of the dependencies.
+
+**Correct for testing three factors, then say it in words.** P-values are
+Benjamini-Hochberg-adjusted across rain, wind and frost; a verdict needs an
+adjusted p below 0.05 *and* a CI excluding zero. "Raises punctuality" is a
+possible answer and is reported as found, not hidden. Season cells are
+adjusted among themselves and labelled exploratory; a cell with fewer than a
+few testable strata is shown as a dash rather than a noisy number.
+
+**Dose-response as the robustness check.** If bad weather causes delays, more of
+it should cause more delay. A trains-weighted fixed-effects slope of on-time
+share on intensity (rain / climate normal, strong-wind days, frost days), with
+the same permutation and bootstrap machinery, is read against each binary
+verdict: *supported*, *unsupported* or *contradicted*. A significant gap with a
+flat slope is flagged rather than trusted.
+
+**e2e asserts that the analysis ran, never what it concluded.** The workflow
+checks every factor was testable on real data, that the season cells partition
+the panel exactly, and that each factor has a slope and a consistency reading.
+Asserting "rain lowers punctuality" would turn a research question into a test
+that fails when the data disagrees, which is exactly when the answer matters.
+

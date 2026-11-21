@@ -144,7 +144,7 @@ verify-marts: ## Check the marts: tables, unique grain, facts match sources, tra
 weather-report: ## Print the weather-impact marts as Markdown, read as railfall_reader
 	$(PYTHON) -m railfall.transform.report $(REPORT_ARGS)
 
-weather-stats: ## Test whether rain / wind / frost significantly lower punctuality, overall and by season
+weather-stats: ## Test whether rain / wind / frost significantly lower punctuality: overall, by season, dose-response
 	$(PYTHON) -m railfall.analysis.weather $(STATS_ARGS)
 
 logs: ## Follow service logs
