@@ -560,6 +560,15 @@ jobs:
             and ([.by_season[] | select(.tested)] | length) >= 1
             and (.by_season | map(select(.tested))
               | all(.p_adjusted != null and .ci_low <= .ci_high))' weather-stats.json
+          # Dose-response: a slope per factor on the same real panel, at least
+          # rain testable (precipitation ratio varies everywhere), every factor
+          # with a consistency reading against its binary verdict.
+          jq -e '([.dose[].factor] == ["rain", "wind", "frost"])
+            and (.dose | all(.route_months > 0 and .route_months <= $total))
+            and (.dose[] | select(.factor == "rain")
+              | .slope != null and .p_adjusted != null and .ci_low <= .ci_high)
+            and (.dose | all(.consistency | IN("supported", "unsupported", "contradicted")))' \
+            --argjson total "$(jq .route_months weather-stats.json)" weather-stats.json
           cat weather-stats.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: dbt docs generate on the live warehouse

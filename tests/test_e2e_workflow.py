@@ -305,6 +305,8 @@ def test_weather_stats_run_on_the_real_marts_after_the_report(steps):
     assert "--report weather-stats.json" in runs[stats]
     assert "(.by_season | length) >= 3" in runs[stats]
     assert "== .route_months" in runs[stats], "seasons must partition the panel"
+    assert '[.dose[].factor] == ["rain", "wind", "frost"]' in runs[stats]
+    assert ".consistency" in runs[stats], "the slope is read against the binary verdict"
     assert "GITHUB_STEP_SUMMARY" in runs[stats]
 
 
