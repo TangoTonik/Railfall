@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from railfall.analysis import weather
+from railfall.analysis.dose import DoseTest, build_dose_panel
 from railfall.analysis.panel import build_panel
 from railfall.analysis.stats import FactorTest
 
@@ -132,6 +133,7 @@ def test_main_writes_markdown_and_json(tmp_path, monkeypatch):
     panel = build_panel(_rows())
     monkeypatch.setattr(weather, "_connect", lambda dsn: _NullConn())
     monkeypatch.setattr(weather, "read_panel", lambda conn: panel)
+    monkeypatch.setattr(weather, "read_dose_panel", lambda conn: build_dose_panel(_dose_rows()))
     out, report = tmp_path / "stats.md", tmp_path / "stats.json"
 
     code = weather.main(
@@ -143,6 +145,8 @@ def test_main_writes_markdown_and_json(tmp_path, monkeypatch):
     data = json.loads(report.read_text())
     assert data["ok"] and data["routes"] == 12
     assert [t["factor"] for t in data["tests"]] == ["rain", "wind", "frost"]
+    assert [d["factor"] for d in data["dose"]] == ["rain", "wind", "frost"]
+    assert "## Dose-response" in out.read_text()
 
 
 def test_by_season_cells_in_markdown_and_json(result):
@@ -170,7 +174,8 @@ def test_no_seasons_flag_skips_the_breakdown(tmp_path, monkeypatch):
     monkeypatch.setattr(weather, "read_panel", lambda conn: build_panel(_rows()))
     report = tmp_path / "stats.json"
 
-    args = ["--report", str(report), "--no-seasons", "--permutations", "19", "--bootstrap", "19"]
+    args = ["--report", str(report), "--no-seasons", "--no-dose"]
+    args += ["--permutations", "19", "--bootstrap", "19"]
     assert weather.main(args) == 0
     assert json.loads(report.read_text())["by_season"] == []
 
@@ -179,7 +184,7 @@ def test_main_fails_on_empty_panel(monkeypatch, capsys):
     monkeypatch.setattr(weather, "_connect", lambda dsn: _NullConn())
     monkeypatch.setattr(weather, "read_panel", lambda conn: build_panel([]))
 
-    assert weather.main(["--json"]) == 1
+    assert weather.main(["--json", "--no-dose"]) == 1
     assert "error: the route-month panel is empty" in capsys.readouterr().err
 
 
@@ -189,3 +194,102 @@ class _NullConn:
 
     def __exit__(self, *exc):
         return False
+
+
+def _dose_rows(seed: int = 5) -> list[tuple]:
+    """Rain costs 4 pts per extra normal month of rain; wind and frost intensity do nothing."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for r in range(12):
+        base = 0.82 + 0.01 * r
+        for season in SEASONS.values():
+            for _ in range(6):
+                ratio = float(rng.uniform(0.2, 2.5))
+                wind_days, frost_days = int(rng.integers(0, 6)), int(rng.integers(0, 8))
+                rate = base - 0.04 * ratio + rng.normal(0, 0.004)
+                rows.append(
+                    (f"R{r:02d}", "National", season, 400,
+                     round(400 * min(max(rate, 0), 1)), ratio, wind_days, frost_days)
+                )  # fmt: skip
+    return rows
+
+
+@pytest.fixture(scope="module")
+def with_dose():
+    return weather.analyse(
+        build_panel(_rows()),
+        permutations=199,
+        resamples=199,
+        seed=1,
+        by_season=False,
+        dose_panel=build_dose_panel(_dose_rows()),
+    )
+
+
+def test_dose_response_backs_up_the_rain_verdict(with_dose):
+    by_factor = {d.factor: d for d in with_dose.dose}
+    assert list(by_factor) == ["rain", "wind", "frost"]
+    assert by_factor["rain"].slope == pytest.approx(-0.04, abs=0.005)
+    assert weather.dose_verdict(by_factor["rain"]) == weather.LOWERS
+    assert with_dose.consistency() == {
+        "rain": weather.SUPPORTED,
+        "wind": weather.SUPPORTED,
+        "frost": weather.SUPPORTED,
+    }
+
+
+def test_dose_section_in_markdown_and_json(with_dose):
+    text = weather.render_markdown(with_dose)
+    assert "## Dose-response" in text
+    assert "| rain | -4." in text
+    assert "x normal rain" in text
+    rows = with_dose.to_dict()["dose"]
+    assert [r["consistency"] for r in rows] == [weather.SUPPORTED] * 3
+    assert rows[0]["verdict"] == weather.LOWERS
+    json.dumps(rows, allow_nan=False)
+
+
+def test_no_dose_panel_means_no_dose_section(result):
+    assert result.dose == []
+    assert result.to_dict()["dose"] == []
+    assert "## Dose-response" not in weather.render_markdown(result)
+
+
+@pytest.mark.parametrize(
+    ("gap", "slope", "expected"),
+    [
+        (weather.LOWERS, weather.LOWERS, weather.SUPPORTED),
+        (weather.NO_EFFECT, weather.NO_EFFECT, weather.SUPPORTED),
+        (weather.LOWERS, weather.NO_EFFECT, weather.UNSUPPORTED),
+        (weather.NO_EFFECT, weather.RAISES, weather.UNSUPPORTED),
+        (weather.LOWERS, weather.RAISES, weather.CONTRADICTED),
+        (weather.UNTESTABLE, weather.UNTESTABLE, weather.UNSUPPORTED),
+        (weather.LOWERS, weather.UNTESTABLE, weather.UNSUPPORTED),
+    ],
+)
+def test_consistency(gap, slope, expected):
+    assert weather.consistency(gap, slope) == expected
+
+
+def _dose(**overrides) -> DoseTest:
+    base = dict(
+        factor="rain", unit="x normal rain", slope=-0.03, ci_low=-0.05, ci_high=-0.01,
+        p_value=0.01, p_adjusted=0.02, route_months=100, strata_used=10,
+        permutations=99, bootstrap=99,
+    )  # fmt: skip
+    return DoseTest(**{**base, **overrides})
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, weather.LOWERS),
+        ({"slope": 0.03, "ci_low": 0.01, "ci_high": 0.05}, weather.RAISES),
+        ({"p_adjusted": 0.2}, weather.NO_EFFECT),
+        ({"ci_high": 0.01}, weather.NO_EFFECT),
+        ({"strata_used": 0}, weather.UNTESTABLE),
+        ({"slope": math.nan}, weather.UNTESTABLE),
+    ],
+)
+def test_dose_verdict(overrides, expected):
+    assert weather.dose_verdict(_dose(**overrides)) == expected

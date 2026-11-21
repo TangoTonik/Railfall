@@ -19,6 +19,11 @@ verdict for a factor reads off the adjusted p-value and the CI:
 A season-by-season table follows (`railfall.analysis.seasons`), so a
 winter-only effect is not hidden by the pooled number; `--no-seasons` skips it.
 
+Then a dose-response check (`railfall.analysis.dose`): the within-stratum slope
+of punctuality on the factor's intensity. Each factor gets a consistency
+reading: a "lowers punctuality" verdict is *supported* when the slope is
+significantly negative too, *unsupported* when it is not. `--no-dose` skips it.
+
 It connects as `railfall_reader`, like the marts report. Exit code 1 when the
 panel is empty or no factor could be tested at all, so CI fails loudly instead
 of publishing an empty answer.
@@ -35,6 +40,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from railfall.analysis.dose import DosePanel, DoseTest, analyse_dose, read_dose_panel
 from railfall.analysis.panel import FACTORS, Panel, read_panel
 from railfall.analysis.seasons import DEFAULT_MIN_STRATA, SeasonCell, season_breakdown
 from railfall.analysis.stats import (
@@ -54,6 +60,10 @@ RAISES = "raises punctuality"
 NO_EFFECT = "no significant effect"
 UNTESTABLE = "not testable"
 
+SUPPORTED = "supported"
+UNSUPPORTED = "unsupported"
+CONTRADICTED = "contradicted"
+
 
 def verdict(test: FactorTest, alpha: float = DEFAULT_ALPHA) -> str:
     """Plain-words reading of one factor's test (see module docstring)."""
@@ -69,6 +79,35 @@ def verdict(test: FactorTest, alpha: float = DEFAULT_ALPHA) -> str:
     return NO_EFFECT
 
 
+def dose_verdict(test: DoseTest, alpha: float = DEFAULT_ALPHA) -> str:
+    """Same reading as `verdict`, for a slope (negative = worse weather, later trains)."""
+    if test.strata_used == 0 or math.isnan(test.slope):
+        return UNTESTABLE
+    p = test.p_adjusted if test.p_adjusted is not None else test.p_value
+    if math.isnan(p) or p >= alpha:
+        return NO_EFFECT
+    if test.ci_high < 0:
+        return LOWERS
+    if test.ci_low > 0:
+        return RAISES
+    return NO_EFFECT
+
+
+def consistency(gap_verdict: str, slope_verdict: str) -> str:
+    """Does the dose-response back up the binary verdict?
+
+    * supported: both agree on a direction, or both find nothing;
+    * contradicted: they point in opposite significant directions;
+    * unsupported: one finds an effect the other does not (or either is untestable).
+    """
+    directional = (LOWERS, RAISES)
+    if gap_verdict == slope_verdict and gap_verdict in (*directional, NO_EFFECT):
+        return SUPPORTED
+    if gap_verdict in directional and slope_verdict in directional:
+        return CONTRADICTED
+    return UNSUPPORTED
+
+
 @dataclass
 class WeatherAnalysis:
     route_months: int = 0
@@ -79,6 +118,7 @@ class WeatherAnalysis:
     seed: int | None = DEFAULT_SEED
     tests: list[FactorTest] = field(default_factory=list)
     seasons: list[SeasonCell] = field(default_factory=list)
+    dose: list[DoseTest] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -87,6 +127,13 @@ class WeatherAnalysis:
 
     def verdicts(self) -> dict[str, str]:
         return {t.factor: verdict(t, self.alpha) for t in self.tests}
+
+    def consistency(self) -> dict[str, str]:
+        gaps = self.verdicts()
+        return {
+            d.factor: consistency(gaps.get(d.factor, UNTESTABLE), dose_verdict(d, self.alpha))
+            for d in self.dose
+        }
 
     def to_dict(self) -> dict[str, Any]:
         def clean(value: Any) -> Any:
@@ -115,6 +162,13 @@ class WeatherAnalysis:
             else:
                 row["verdict"] = UNTESTABLE
             by_season.append(row)
+        agreement = self.consistency()
+        dose = []
+        for test in self.dose:
+            row = {k: clean(v) for k, v in asdict(test).items()}
+            row["verdict"] = dose_verdict(test, self.alpha)
+            row["consistency"] = agreement[test.factor]
+            dose.append(row)
         return {
             "route_months": self.route_months,
             "routes": self.routes,
@@ -124,6 +178,7 @@ class WeatherAnalysis:
             "seed": self.seed,
             "tests": tests,
             "by_season": by_season,
+            "dose": dose,
             "errors": list(self.errors),
             "ok": self.ok,
         }
@@ -139,6 +194,7 @@ def analyse(
     seed: int | None = DEFAULT_SEED,
     by_season: bool = True,
     min_strata: int = DEFAULT_MIN_STRATA,
+    dose_panel: DosePanel | None = None,
 ) -> WeatherAnalysis:
     """Test every factor on the panel and adjust the p-values together."""
     result = WeatherAnalysis(
@@ -181,6 +237,14 @@ def analyse(
             resamples=resamples,
             confidence=confidence,
             min_strata=min_strata,
+            seed=seed,
+        )
+    if dose_panel is not None and len(dose_panel):
+        result.dose = analyse_dose(
+            dose_panel,
+            permutations=permutations,
+            resamples=resamples,
+            confidence=confidence,
             seed=seed,
         )
     untestable = [t.factor for t in result.tests if verdict(t, alpha) == UNTESTABLE]
@@ -245,6 +309,7 @@ def render_markdown(result: WeatherAnalysis) -> str:
             f"{result.alpha:g}; seed {result.seed}.",
         ]
     out += _render_seasons(result)
+    out += _render_dose(result)
     if result.errors:
         out += ["", "## Problems", ""] + [f"- {e}" for e in result.errors]
     return "\n".join(out) + "\n"
@@ -280,6 +345,37 @@ def _render_seasons(result: WeatherAnalysis) -> list[str]:
     return out
 
 
+def _slope(test: DoseTest) -> str:
+    # Slopes are fractions per unit of intensity; show them in points like the gaps.
+    return "n/a" if math.isnan(test.slope) else f"{100 * test.slope:+.2f} pts"
+
+
+def _render_dose(result: WeatherAnalysis) -> list[str]:
+    if not result.dose:
+        return []
+    level = f"{100 * result.confidence:g}%"
+    agreement = result.consistency()
+    out = [
+        "",
+        "## Dose-response",
+        "",
+        "Within the same route-season, does punctuality fall further as the weather gets "
+        "worse? Slope of on-time share on intensity, per unit shown; negative means each "
+        "extra unit costs punctuality. *Consistency* compares it with the verdict above.",
+        "",
+        f"| factor | slope per unit | unit | {level} CI | adjusted p | route-months | "
+        "verdict | consistency |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for t in result.dose:
+        ci = "n/a" if math.isnan(t.ci_low) else f"{100 * t.ci_low:+.2f} to {100 * t.ci_high:+.2f}"
+        out.append(
+            f"| {t.factor} | {_slope(t)} | {t.unit} | {ci} | {_p(t.p_adjusted)} | "
+            f"{t.route_months:,} | {dose_verdict(t, result.alpha)} | {agreement[t.factor]} |"
+        )
+    return out
+
+
 def _connect(dsn: str) -> Any:
     import psycopg
 
@@ -300,10 +396,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--no-seasons", action="store_true", help="skip the season-by-season breakdown"
     )
+    parser.add_argument("--no-dose", action="store_true", help="skip the dose-response check")
     args = parser.parse_args(argv)
 
     with _connect(reader_dsn()) as conn:
         panel = read_panel(conn)
+        dose_panel = None if args.no_dose else read_dose_panel(conn)
     result = analyse(
         panel,
         permutations=args.permutations,
@@ -311,6 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         alpha=args.alpha,
         seed=args.seed,
         by_season=not args.no_seasons,
+        dose_panel=dose_panel,
     )
 
     markdown = render_markdown(result)
