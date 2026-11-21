@@ -16,6 +16,9 @@ verdict for a factor reads off the adjusted p-value and the CI:
 * **no significant effect**: anything else, including a test with too few
   strata to say anything.
 
+A season-by-season table follows (`railfall.analysis.seasons`), so a
+winter-only effect is not hidden by the pooled number; `--no-seasons` skips it.
+
 It connects as `railfall_reader`, like the marts report. Exit code 1 when the
 panel is empty or no factor could be tested at all, so CI fails loudly instead
 of publishing an empty answer.
@@ -33,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from railfall.analysis.panel import FACTORS, Panel, read_panel
+from railfall.analysis.seasons import DEFAULT_MIN_STRATA, SeasonCell, season_breakdown
 from railfall.analysis.stats import (
     DEFAULT_BOOTSTRAP,
     DEFAULT_CONFIDENCE,
@@ -74,6 +78,7 @@ class WeatherAnalysis:
     confidence: float = DEFAULT_CONFIDENCE
     seed: int | None = DEFAULT_SEED
     tests: list[FactorTest] = field(default_factory=list)
+    seasons: list[SeasonCell] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -94,6 +99,22 @@ class WeatherAnalysis:
             row["significant"] = test.significant
             row["verdict"] = verdict(test, self.alpha)
             tests.append(row)
+        by_season = []
+        for cell in self.seasons:
+            row: dict[str, Any] = {
+                "season": cell.season,
+                "factor": cell.factor,
+                "route_months": cell.route_months,
+                "strata_available": cell.strata_available,
+                "tested": cell.tested,
+            }
+            if cell.test is not None:
+                for key in ("gap", "ci_low", "ci_high", "p_value", "p_adjusted"):
+                    row[key] = clean(getattr(cell.test, key))
+                row["verdict"] = verdict(cell.test, self.alpha)
+            else:
+                row["verdict"] = UNTESTABLE
+            by_season.append(row)
         return {
             "route_months": self.route_months,
             "routes": self.routes,
@@ -102,6 +123,7 @@ class WeatherAnalysis:
             "confidence": self.confidence,
             "seed": self.seed,
             "tests": tests,
+            "by_season": by_season,
             "errors": list(self.errors),
             "ok": self.ok,
         }
@@ -115,6 +137,8 @@ def analyse(
     confidence: float = DEFAULT_CONFIDENCE,
     alpha: float = DEFAULT_ALPHA,
     seed: int | None = DEFAULT_SEED,
+    by_season: bool = True,
+    min_strata: int = DEFAULT_MIN_STRATA,
 ) -> WeatherAnalysis:
     """Test every factor on the panel and adjust the p-values together."""
     result = WeatherAnalysis(
@@ -150,6 +174,15 @@ def analyse(
         replace(t, p_adjusted=None if math.isnan(p) else p)
         for t, p in zip(raw, adjusted, strict=True)
     ]
+    if by_season:
+        result.seasons = season_breakdown(
+            panel,
+            permutations=permutations,
+            resamples=resamples,
+            confidence=confidence,
+            min_strata=min_strata,
+            seed=seed,
+        )
     untestable = [t.factor for t in result.tests if verdict(t, alpha) == UNTESTABLE]
     if len(untestable) == len(result.tests):
         result.errors.append("no factor has a stratum with both adverse and normal months")
@@ -211,9 +244,40 @@ def render_markdown(result: WeatherAnalysis) -> str:
             f"Benjamini-Hochberg across the {len(result.tests)} factors at alpha "
             f"{result.alpha:g}; seed {result.seed}.",
         ]
+    out += _render_seasons(result)
     if result.errors:
         out += ["", "## Problems", ""] + [f"- {e}" for e in result.errors]
     return "\n".join(out) + "\n"
+
+
+def _render_seasons(result: WeatherAnalysis) -> list[str]:
+    if not result.seasons:
+        return []
+    factors = list(FACTORS)
+    out = [
+        "",
+        "## By season",
+        "",
+        "The same test inside each season (strata route x service). Exploratory: "
+        f"p-values adjusted across all {len(result.seasons)} cells; a cell needs a few "
+        "route-services with both adverse and normal months to be tested.",
+        "",
+        "| season | " + " | ".join(factors) + " |",
+        "|---|" + "---|" * len(factors),
+    ]
+    for season in dict.fromkeys(c.season for c in result.seasons):
+        cells = {c.factor: c for c in result.seasons if c.season == season}
+        shown = []
+        for factor in factors:
+            cell = cells.get(factor)
+            if cell is None or cell.test is None:
+                shown.append("—")
+                continue
+            mark = " *" if verdict(cell.test, result.alpha) in (LOWERS, RAISES) else ""
+            shown.append(f"{_pts(cell.test.gap)} (p {_p(cell.test.p_adjusted)}){mark}")
+        out.append(f"| {season} | " + " | ".join(shown) + " |")
+    out += ["", "`*` significant after adjustment, CI excluding zero; `—` too few strata."]
+    return out
 
 
 def _connect(dsn: str) -> Any:
@@ -233,6 +297,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--bootstrap", type=int, default=DEFAULT_BOOTSTRAP)
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument(
+        "--no-seasons", action="store_true", help="skip the season-by-season breakdown"
+    )
     args = parser.parse_args(argv)
 
     with _connect(reader_dsn()) as conn:
@@ -243,6 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         resamples=args.bootstrap,
         alpha=args.alpha,
         seed=args.seed,
+        by_season=not args.no_seasons,
     )
 
     markdown = render_markdown(result)

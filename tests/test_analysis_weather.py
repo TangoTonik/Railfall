@@ -145,6 +145,36 @@ def test_main_writes_markdown_and_json(tmp_path, monkeypatch):
     assert [t["factor"] for t in data["tests"]] == ["rain", "wind", "frost"]
 
 
+def test_by_season_cells_in_markdown_and_json(result):
+    assert [c.season for c in result.seasons[::3]] == ["winter", "spring", "summer", "autumn"]
+    text = weather.render_markdown(result)
+    assert "## By season" in text
+    assert "| season | rain | wind | frost |" in text
+    # Frost is only ever adverse in winter: the other seasons show a dash.
+    assert text.count("| — |") == 3
+
+    rows = result.to_dict()["by_season"]
+    assert len(rows) == 12
+    summer_frost = next(r for r in rows if r["season"] == "summer" and r["factor"] == "frost")
+    assert summer_frost == {
+        "season": "summer", "factor": "frost", "route_months": 72,
+        "strata_available": 0, "tested": False, "verdict": weather.UNTESTABLE,
+    }  # fmt: skip
+    winter_rain = next(r for r in rows if r["season"] == "winter" and r["factor"] == "rain")
+    assert winter_rain["verdict"] == weather.LOWERS
+    json.dumps(rows, allow_nan=False)
+
+
+def test_no_seasons_flag_skips_the_breakdown(tmp_path, monkeypatch):
+    monkeypatch.setattr(weather, "_connect", lambda dsn: _NullConn())
+    monkeypatch.setattr(weather, "read_panel", lambda conn: build_panel(_rows()))
+    report = tmp_path / "stats.json"
+
+    args = ["--report", str(report), "--no-seasons", "--permutations", "19", "--bootstrap", "19"]
+    assert weather.main(args) == 0
+    assert json.loads(report.read_text())["by_season"] == []
+
+
 def test_main_fails_on_empty_panel(monkeypatch, capsys):
     monkeypatch.setattr(weather, "_connect", lambda dsn: _NullConn())
     monkeypatch.setattr(weather, "read_panel", lambda conn: build_panel([]))

@@ -542,7 +542,8 @@ jobs:
       - name: Weather significance tests on the real marts
         # Stratified permutation test + route bootstrap per factor, read as
         # railfall_reader. Asserts the test actually ran on real data (every
-        # factor testable, enough route-months), not what the verdict is.
+        # factor testable, enough route-months), not what the verdict is;
+        # then that the season-by-season breakdown covers the same panel.
         run: |
           make --no-print-directory weather-stats \
             STATS_ARGS="--out weather-stats.md --report weather-stats.json"
@@ -551,6 +552,14 @@ jobs:
             and (.tests | all(.strata_used > 0 and .p_value != null
               and .p_adjusted != null and .ci_low <= .ci_high))
             and (.tests | all(.verdict != "not testable"))' weather-stats.json
+          # Season breakdown: 3 cells per season present, the seasons partition
+          # the panel exactly, and at least one season-level cell is testable.
+          jq -e '(.by_season | length) >= 3 and (.by_season | length) % 3 == 0
+            and ([.by_season[] | select(.factor == "rain") | .route_months] | add)
+              == .route_months
+            and ([.by_season[] | select(.tested)] | length) >= 1
+            and (.by_season | map(select(.tested))
+              | all(.p_adjusted != null and .ci_low <= .ci_high))' weather-stats.json
           cat weather-stats.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: dbt docs generate on the live warehouse
