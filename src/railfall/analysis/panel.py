@@ -33,6 +33,9 @@ from numpy.typing import NDArray
 # Factor name -> boolean column of int_route_month_weather, in report order.
 FACTORS: dict[str, str] = {"rain": "is_wet", "wind": "is_windy", "frost": "is_frosty"}
 
+# dim_month.season labels, in calendar order.
+SEASON_ORDER = ("winter", "spring", "summer", "autumn")
+
 _IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 PANEL_COLUMNS = (
@@ -98,6 +101,27 @@ class Panel:
     @property
     def months(self) -> int:
         return int(np.unique(self.month).size) if len(self) else 0
+
+    def subset(self, mask: NDArray[np.bool_]) -> Panel:
+        """The route-months where `mask` is true, every array filtered alike."""
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != self.route_id.shape:
+            raise ValueError("mask must have one entry per route-month")
+        return Panel(
+            route_id=self.route_id[mask],
+            service=self.service[mask],
+            month=self.month[mask],
+            season=self.season[mask],
+            trains_run=self.trains_run[mask],
+            trains_on_time=self.trains_on_time[mask],
+            adverse={factor: flags[mask] for factor, flags in self.adverse.items()},
+        )
+
+    def seasons(self) -> list[str]:
+        """Seasons present, in calendar order (winter first); unknown labels last."""
+        present = set(self.season.tolist())
+        known = [s for s in SEASON_ORDER if s in present]
+        return known + sorted(present - set(SEASON_ORDER))
 
 
 def _flag(value: Any) -> bool:
