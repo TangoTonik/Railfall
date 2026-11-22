@@ -29,7 +29,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats logs ps down \
+.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats freshness run-metrics logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -146,6 +146,12 @@ weather-report: ## Print the weather-impact marts as Markdown, read as railfall_
 
 weather-stats: ## Test whether rain / wind / frost significantly lower punctuality: overall, by season, dose-response
 	$(PYTHON) -m railfall.analysis.weather $(STATS_ARGS)
+
+freshness: ## Check every raw table was loaded recently and its newest period is within SLA
+	$(PYTHON) -m railfall.monitoring.freshness $(MONITOR_ARGS)
+
+run-metrics: ## Summarise recent load runs and flag failed tables or abnormal staged volumes
+	$(PYTHON) -m railfall.monitoring.runs $(MONITOR_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) logs -f

@@ -49,6 +49,8 @@ def test_help_lists_documented_targets():
         "verify-marts",
         "weather-report",
         "weather-stats",
+        "freshness",
+        "run-metrics",
         "down",
     )
     for target in (*targets, "clean"):
@@ -186,3 +188,12 @@ def test_weather_report_reads_the_marts_as_the_reader():
 def test_weather_stats_runs_the_significance_tests():
     out = _make("-n", "weather-stats", "PYTHON=python", "STATS_ARGS=--report s.json")
     assert out.strip() == "python -m railfall.analysis.weather --report s.json"
+
+
+@pytest.mark.parametrize(
+    ("target", "module"),
+    [("freshness", "railfall.monitoring.freshness"), ("run-metrics", "railfall.monitoring.runs")],
+)
+def test_monitoring_targets_run_their_cli_with_extra_args(target, module):
+    out = _make("-n", target, "PYTHON=python", "MONITOR_ARGS=--json")
+    assert f"python -m {module} --json" in out
