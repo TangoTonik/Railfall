@@ -51,6 +51,7 @@ def test_help_lists_documented_targets():
         "weather-stats",
         "freshness",
         "run-metrics",
+        "monitor",
         "down",
     )
     for target in (*targets, "clean"):
@@ -197,3 +198,12 @@ def test_weather_stats_runs_the_significance_tests():
 def test_monitoring_targets_run_their_cli_with_extra_args(target, module):
     out = _make("-n", target, "PYTHON=python", "MONITOR_ARGS=--json")
     assert f"python -m {module} --json" in out
+
+
+def test_monitor_writes_both_reports_then_summarises_them():
+    out = _make("-n", "monitor", "PYTHON=python", "MONITOR_DIR=out", "SUMMARY_ARGS=--no-llm")
+    lines = [line for line in out.splitlines() if "railfall.monitoring" in line]
+    assert "-m railfall.monitoring.freshness --report out/freshness.json" in lines[0]
+    assert "-m railfall.monitoring.runs --report out/runs.json" in lines[1]
+    assert "-m railfall.monitoring.summary --freshness out/freshness.json" in lines[2]
+    assert "--report out/summary.json --no-llm" in out

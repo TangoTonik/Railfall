@@ -12,6 +12,8 @@ WAIT ?= 60
 TF ?= terraform
 TF_DIR := infra/terraform
 DAG ?= railfall_ingest
+# Where `make monitor` writes its JSON reports.
+MONITOR_DIR ?= monitoring-reports
 
 # Terraform reaches MinIO on the host port published by compose.
 TF_VAR_minio_server ?= localhost:$(or $(MINIO_API_PORT),9000)
@@ -29,7 +31,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats freshness run-metrics logs ps down \
+.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats freshness run-metrics monitor logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -152,6 +154,13 @@ freshness: ## Check every raw table was loaded recently and its newest period is
 
 run-metrics: ## Summarise recent load runs and flag failed tables or abnormal staged volumes
 	$(PYTHON) -m railfall.monitoring.runs $(MONITOR_ARGS)
+
+monitor: ## Freshness + run metrics, then one anomaly summary (LLM wording if LLM_SUMMARY_ENABLED=1)
+	mkdir -p $(MONITOR_DIR)
+	-$(PYTHON) -m railfall.monitoring.freshness --report $(MONITOR_DIR)/freshness.json > /dev/null
+	-$(PYTHON) -m railfall.monitoring.runs --report $(MONITOR_DIR)/runs.json > /dev/null
+	$(PYTHON) -m railfall.monitoring.summary --freshness $(MONITOR_DIR)/freshness.json \
+		--runs $(MONITOR_DIR)/runs.json --report $(MONITOR_DIR)/summary.json $(SUMMARY_ARGS)
 
 logs: ## Follow service logs
 	$(COMPOSE) $(AIRFLOW_PROFILE) $(BI_PROFILE) logs -f
