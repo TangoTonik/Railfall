@@ -2,7 +2,7 @@
 
     ingest_sncf ──> verify_sncf ──┐
     ingest_meteo[dept] ──> verify_meteo ──┴─> build_silver ──> verify_silver
-        ──> load_warehouse ──> verify_warehouse ──> check_raw_quality
+        ──> load_warehouse ──> verify_warehouse ──> check_raw_quality ──> monitor_warehouse
 
 The ingestion half is the same as `railfall_ingest`; the rest runs the Spark
 transforms and the silver -> `raw.*` merge through
@@ -12,6 +12,12 @@ local SparkSession in the worker, reading and writing the MinIO lake over S3A.
 `check_raw_quality` is the data-quality gate: the Great Expectations
 checkpoint over `raw.*` (value ranges, codes, counters that must reconcile),
 run as the read-only transformer role, so dbt never builds on a broken load.
+
+`monitor_warehouse` closes the run: freshness per raw table, the load run
+metrics and staged-volume checks, condensed into one anomaly summary (its
+XCom, and the task log). Stale data and odd volumes are reported only; a
+failed, missing or empty load fails the task. The LLM wording of the summary
+is off by default (`LLM_SUMMARY_ENABLED=1` and a local Ollama to turn it on).
 
 Spark only starts once *both* bronze verifications passed: a silver build on a
 half-landed day would publish partial months. Every step is idempotent (bronze
@@ -62,7 +68,7 @@ SPARK_TIMEOUT = timedelta(minutes=60)
             description="bronze ingest_date partition (YYYY-MM-DD); default: interval end",
         ),
     },
-    tags=["railfall", "bronze", "silver", "warehouse", "quality"],
+    tags=["railfall", "bronze", "silver", "warehouse", "quality", "monitoring"],
     doc_md=__doc__,
 )
 def railfall_pipeline():
@@ -105,13 +111,18 @@ def railfall_pipeline():
     def check_raw_quality() -> list[dict]:
         return pipeline.check_quality()
 
+    @task
+    def monitor_warehouse() -> dict:
+        return pipeline.monitor()
+
     bronze_sncf = ingest_sncf(INGEST_DATE) >> verify_sncf(INGEST_DATE)
     bronze_meteo = ingest_meteo.partial(ingest_date=INGEST_DATE).expand(
         department=departments
     ) >> verify_meteo(INGEST_DATE)
     silver = build_silver(INGEST_DATE)
     [bronze_sncf, bronze_meteo] >> silver
-    silver >> verify_silver() >> load_warehouse() >> verify_warehouse() >> check_raw_quality()
+    warehouse = silver >> verify_silver() >> load_warehouse() >> verify_warehouse()
+    warehouse >> check_raw_quality() >> monitor_warehouse()
 
 
 railfall_pipeline()

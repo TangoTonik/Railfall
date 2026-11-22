@@ -37,6 +37,7 @@ def test_dag_tasks_only_call_existing_orchestration_functions() -> None:
         "load_warehouse",
         "verify_warehouse",
         "check_quality",
+        "monitor",
     }
     for name in _called("ingest"):
         assert callable(getattr(ingest, name))
@@ -70,7 +71,8 @@ def test_dag_shape(dag) -> None:
         "verify_silver": ["load_warehouse"],
         "load_warehouse": ["verify_warehouse"],
         "verify_warehouse": ["check_raw_quality"],
-        "check_raw_quality": [],
+        "check_raw_quality": ["monitor_warehouse"],
+        "monitor_warehouse": [],
     }
 
 
