@@ -23,6 +23,7 @@
 | Modeling | dbt | Versioned, tested SQL transformations |
 | Orchestration | Airflow | Industry standard scheduler |
 | Data quality | dbt tests, Great Expectations | dbt guards the models it builds, GX the raw load underneath |
+| Monitoring | SQL over the load audit log, optional local LLM (Ollama) | Freshness and run metrics need no extra service; the LLM only rewords, off by default |
 | BI | Metabase (open source) | Free, self-hosted; dashboards provisioned from JSON + SQL through its REST API |
 | Infra | Docker Compose, Terraform | Reproducible, infrastructure as code |
 | CI | GitHub Actions | Lint + tests on every push |
@@ -65,6 +66,9 @@ make dbt-build DBT_ARGS="--select departments marts"  # seed + star schema and i
 make verify-marts   # marts: tables, unique grain, facts keep every row, trains reconcile
 make weather-report # the weather-impact marts as Markdown, read as railfall_reader
 make weather-stats  # significance tests: does bad weather lower punctuality? (by season, dose-response)
+make freshness     # every raw table: last successful load (36 h SLA) and newest period vs its source lag
+make run-metrics   # recent load runs from the audit log, failed tables, staged-volume anomalies
+make monitor       # both, then one anomaly digest (LLM_SUMMARY_ENABLED=1 for local-LLM wording)
 make dbt-docs       # dbt docs generate: manifest + catalog introspected from Postgres
 make dbt-docs-bundle DOCS_ARGS=--strict  # lineage, doc coverage, schema drift, catalog.md
 make readme-catalog # regenerate the data catalog below from `dbt parse` (no database)
@@ -174,7 +178,7 @@ the same code as the `make` targets, Spark included (local mode in the worker).
 | DAG | Schedule | Tasks |
 |---|---|---|
 | `railfall_ingest` | daily 05:15 UTC | `ingest_sncf → verify_sncf`; `ingest_meteo[dept]` (mapped over `METEO_DEPARTMENTS`) `→ verify_meteo` |
-| `railfall_pipeline` | daily 05:15 UTC | the ingestion above, then (once both bronze checks pass) `build_silver → verify_silver → load_warehouse → verify_warehouse → check_raw_quality` |
+| `railfall_pipeline` | daily 05:15 UTC | the ingestion above, then (once both bronze checks pass) `build_silver → verify_silver → load_warehouse → verify_warehouse → check_raw_quality → monitor_warehouse` |
 
 Each task returns a JSON summary per dataset as its XCom and fails only after
 trying every dataset; retries are safe because bronze landing is idempotent.
@@ -672,6 +676,33 @@ flowchart LR
 </details>
 
 <!-- catalog:end -->
+
+### Monitoring
+
+Two questions are asked of every `raw.*` table after each load, from the load
+audit log (`raw._load_runs`) rather than row timestamps, because an idempotent
+merge that changed nothing leaves those untouched:
+
+| Check | Source | Flags |
+|---|---|---|
+| Load freshness | last successful load per table | older than 36 h (one late or retried daily run tolerated) |
+| Data freshness | newest `month` / `day` | behind the source's publication lag (SNCF 125 days, Météo daily 45, monthly 70) |
+| Run metrics | latest run per table | a failed table; rows staged < 0.5× or > 2× the median of ≥ 3 earlier loads of the same scope |
+
+`make monitor` writes `freshness.json`, `runs.json` and `summary.json` to
+`monitoring-reports/` and prints one digest, most severe anomaly first. In
+Airflow the same checks run as `monitor_warehouse`, the last task of
+`railfall_pipeline`: a failed, missing or empty table turns the run red, while a
+lagging publisher or an odd volume is only reported, since a retry cannot fix
+either.
+
+The plain-language summary is opt-in: with `LLM_SUMMARY_ENABLED=1` (and
+`LLM_URL` / `LLM_MODEL` pointing at a local [Ollama](https://ollama.com)), only
+the anomaly facts are sent to the model, never table contents, and only when
+something is wrong. If the model is unreachable, slow or rambles, the rule-based
+digest is used instead. e2e runs the monitor on the real warehouse, checks it
+agrees with the DAG task, and points the LLM at a closed port to prove that
+fallback.
 
 ### Dashboards (Metabase)
 
