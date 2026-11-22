@@ -81,3 +81,29 @@ def test_airflow_password_hidden_from_repr():
     s = Settings.from_env({"AIRFLOW_ADMIN_USER": "ops", "AIRFLOW_ADMIN_PASSWORD": "hunter2"})
     assert s.airflow_user == "ops"
     assert "hunter2" not in repr(s)
+
+
+def test_llm_summary_off_by_default():
+    s = Settings.from_env({})
+    assert s.llm_summary_enabled is False
+    assert s.llm_url == "http://localhost:11434"
+
+
+def test_llm_settings_from_env():
+    s = Settings.from_env(
+        {
+            "LLM_SUMMARY_ENABLED": "yes",
+            "LLM_URL": "http://ollama:11434/",
+            "LLM_MODEL": "mistral:7b",
+            "LLM_TIMEOUT_S": "5",
+        }
+    )
+    assert s.llm_summary_enabled is True
+    assert s.llm_url == "http://ollama:11434"
+    assert s.llm_model == "mistral:7b"
+    assert s.llm_timeout_s == 5.0
+
+
+def test_llm_summary_flag_rejects_garbage():
+    with pytest.raises(ValueError, match="LLM_SUMMARY_ENABLED"):
+        Settings.from_env({"LLM_SUMMARY_ENABLED": "maybe"})

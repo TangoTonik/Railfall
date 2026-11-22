@@ -29,6 +29,13 @@ class Settings:
     airflow_url: str = "http://localhost:8080"
     airflow_user: str = "admin"
     airflow_password: str = field(default="admin", repr=False)
+    # Optional plain-language anomaly summaries from a *local* LLM (Ollama API).
+    # Off by default: the rule-based digest is always produced, the LLM only
+    # rewords it, and nothing leaves the machine.
+    llm_summary_enabled: bool = False
+    llm_url: str = "http://localhost:11434"
+    llm_model: str = "llama3.2:3b"
+    llm_timeout_s: float = 60.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -46,6 +53,17 @@ class Settings:
             if value < 0:
                 raise ValueError(f"{name} must be >= 0, got {value}")
             return value
+
+        def _bool(name: str, default: bool) -> bool:
+            raw = env.get(name)
+            if raw is None or not raw.strip():
+                return default
+            value = raw.strip().lower()
+            if value in {"1", "true", "yes", "on"}:
+                return True
+            if value in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError(f"{name} must be a boolean (1/0, true/false), got {raw!r}")
 
         def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
             raw = env.get(name)
@@ -76,4 +94,8 @@ class Settings:
             ).rstrip("/"),
             airflow_user=env.get("AIRFLOW_ADMIN_USER", defaults.airflow_user),
             airflow_password=env.get("AIRFLOW_ADMIN_PASSWORD", defaults.airflow_password),
+            llm_summary_enabled=_bool("LLM_SUMMARY_ENABLED", defaults.llm_summary_enabled),
+            llm_url=env.get("LLM_URL", defaults.llm_url).rstrip("/"),
+            llm_model=env.get("LLM_MODEL", defaults.llm_model),
+            llm_timeout_s=_float("LLM_TIMEOUT_S", defaults.llm_timeout_s),
         )
