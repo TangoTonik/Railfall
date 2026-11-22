@@ -678,3 +678,46 @@ the panel exactly, and that each factor has a slope and a consistency reading.
 Asserting "rain lowers punctuality" would turn a research question into a test
 that fails when the data disagrees, which is exactly when the answer matters.
 
+
+## Day 18 — Monitoring: run metrics, freshness, optional LLM summaries
+
+**Freshness comes from the load audit log, not from the rows.** The load is an
+idempotent merge: a healthy night that changed nothing leaves `_loaded_at` and
+`_updated_at` untouched, so row timestamps cannot tell a quiet success from a
+pipeline that stopped. The last *successful* run per table in `raw._load_runs`
+can. The load SLA is 36 h, one late or retried daily run, not a skipped day.
+
+**Load freshness and data freshness are separate checks.** A load can succeed
+every night on a source that stopped publishing. Each dated table also has a
+data-lag budget counted from the start of its newest period and set from the
+publisher's real delay (SNCF posts a month one to two months after it ends, so
+125 days; Météo-France daily 45, monthly 70). Reference tables only get load
+freshness and an emptiness check.
+
+**Volume anomalies compare like with like.** The staged row count of a table's
+latest load is compared with the median of its earlier successful loads *of the
+same scope* (a full reload and a one-year repair stage very different volumes),
+flagged below 0.5× or above 2×, and not judged at all with fewer than three
+earlier loads. A median, not a mean, so one bad night does not move the bar.
+
+**Only what a retry can fix turns the DAG red.** `monitor_warehouse` closes
+`railfall_pipeline` and fails on a failed, missing or empty table. Stale data
+and odd volumes are reported in the XCom and logs but do not fail the run:
+retrying cannot make SNCF publish faster, and red runs that nobody can act on
+teach people to ignore red.
+
+**The LLM rewords, it never decides, and it is off by default.** The rule-based
+digest is always produced and is what automation reads. With
+`LLM_SUMMARY_ENABLED=1` a *local* model (Ollama HTTP API, no paid service, no
+data leaves the machine) turns the anomaly facts, never table contents, into a
+few sentences for a human. It is only called when something is wrong, and any
+failure (unreachable, timeout, empty or overlong answer) falls back to the
+digest with the error recorded. stdlib `urllib` was enough; no client library.
+
+**e2e proves it on the real warehouse without a model.** The DAG's monitor
+result is asserted (six tables, non-empty, loaded within the SLA, latest run
+clean, no blocking anomaly, rule-based wording), `make monitor` from the host
+must report the same anomalies, and the opt-in path is run against a closed
+port to prove the fallback. Data lag is reported but not asserted: it depends
+on the publishers, not on this code. No Ollama in CI: pulling a model would
+add minutes and gigabytes to every run to test wording nobody can assert.
