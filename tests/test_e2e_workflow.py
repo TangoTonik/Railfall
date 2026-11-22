@@ -377,3 +377,23 @@ def test_dashboard_specs_are_checked_against_the_live_manifest(steps):
     assert _index(steps, "make --no-print-directory dbt-docs ") < check, "manifest must exist"
     assert check < _index(steps, "make metabase"), "fail before Metabase is booted"
     assert "--manifest dbt/target/manifest.json" in steps[check]["run"]
+
+
+def _pipeline_task_ids() -> set[str]:
+    source = (WORKFLOW.parents[2] / "dags" / "railfall_pipeline.py").read_text()
+    return set(re.findall(r"@task[^\n]*\n(?:\s*@[^\n]*\n)*\s*def (\w+)\(", source))
+
+
+def test_pipeline_task_list_matches_the_dag(steps):
+    # A task added to the DAG but not to this list fails e2e after a green run.
+    run = steps[_index(steps, "DAG=railfall_pipeline")]["run"]
+    listed = re.search(r"unique == \[(.*?)\]", run, re.S)
+    assert listed, "e2e must pin the exact set of pipeline tasks"
+    assert set(re.findall(r'"(\w+)"', listed.group(1))) == _pipeline_task_ids()
+
+
+def test_monitor_result_is_asserted_in_e2e(steps):
+    run = steps[_index(steps, "DAG=railfall_pipeline")]["run"]
+    assert '"monitor_warehouse"' in run
+    assert "$m.freshness" in run and "$m.summary.anomalies" in run
+    assert '$m.summary.source == "rules"' in run, "the LLM wording must stay off in e2e"
