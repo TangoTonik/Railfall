@@ -334,8 +334,8 @@ jobs:
           jq -e '.state == "success"' dag-pipeline.json
           jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-pipeline.json
           jq -e '[.tasks[].task_id] | unique == ["build_silver", "check_raw_quality",
-            "ingest_meteo", "ingest_sncf", "load_warehouse", "verify_meteo", "verify_silver",
-            "verify_sncf", "verify_warehouse"]' \
+            "ingest_meteo", "ingest_sncf", "load_warehouse", "monitor_warehouse", "verify_meteo",
+            "verify_silver", "verify_sncf", "verify_warehouse"]' \
             dag-pipeline.json
           jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-pipeline.json
           # Spark ran in the Airflow worker over S3A: six valid silver tables, unique keys.
@@ -359,6 +359,19 @@ jobs:
                 "stations", "weather_daily", "weather_monthly"]
               and ($q | all(.ok and .evaluated > 0 and (.failures | length == 0)))' \
             dag-pipeline.json
+          # monitor_warehouse closed the run: every raw table just loaded and non-empty,
+          # the latest load run clean, no blocking anomaly, rule-based wording (LLM off).
+          # Data lag and staged volumes depend on the publishers, so they are only reported.
+          jq '.tasks[] | select(.task_id == "monitor_warehouse") | .result.summary.text' \
+            -r dag-pipeline.json
+          jq -e '[.tasks[] | select(.task_id == "monitor_warehouse") | .result][0] as $m
+            | ([$m.freshness[].table] | sort) == ["punctuality_monthly", "route_departments",
+                "route_weather_monthly", "stations", "weather_daily", "weather_monthly"]
+              and ($m.freshness | all(.rows > 0 and .load_age_hours < 36))
+              and ($m.runs.runs[0].ok and ($m.runs.runs[0].failed | length == 0))
+              and ([$m.summary.anomalies[].kind]
+                | all(. != "failed" and . != "missing" and . != "empty"))
+              and $m.summary.source == "rules"' dag-pipeline.json
           # Same bronze as the CLI steps -> same silver and a no-op merge. (If a
           # source republished in between, the counts above still had to agree.)
           jq -e --slurpfile silver silver-2.json --slurpfile wh verify-load-1.json '
