@@ -232,3 +232,52 @@ def check_quality(
         ],
     )
     return [asdict(r) for r in reports]
+
+
+# Anomaly kinds that fail the monitoring task. Stale data and odd volumes are
+# reported (XCom, logs, optional LLM wording) but do not turn the run red: the
+# open data publishes with a lag the pipeline cannot fix, and a run that loaded
+# and validated everything should not be retried because of it.
+BLOCKING_ANOMALIES = frozenset({"failed", "missing", "empty"})
+
+
+def monitor(
+    *,
+    settings: Settings | None = None,
+    conn=None,
+    now=None,
+    use_llm: bool | None = None,
+    schema: str | None = "raw",
+    placeholder: str = "%s",
+) -> dict:
+    """Freshness + run metrics over `raw.*`, condensed into one anomaly summary.
+
+    Reads as the transformer role (like `make monitor`). The LLM wording is only
+    attempted when `LLM_SUMMARY_ENABLED=1` and something is wrong; the
+    rule-based digest is always in the result.
+    """
+    import logging
+
+    from railfall.monitoring import freshness, runs, summary
+
+    settings = settings or Settings.from_env()
+    if conn is None:
+        import psycopg
+
+        from railfall.transform.verify import transformer_dsn
+
+        with psycopg.connect(transformer_dsn(), connect_timeout=10, autocommit=True) as own:
+            return monitor(settings=settings, conn=own, now=now, use_llm=use_llm, schema=schema)
+
+    fresh = [
+        r.as_dict() for r in freshness.check(conn, now=now, schema=schema, placeholder=placeholder)
+    ]
+    recent = runs.recent_runs(conn, schema=schema, placeholder=placeholder)
+    volumes = runs.volume_checks(conn, schema=schema)
+    run_report = runs.report(recent, volumes)
+    result = summary.summarize(summary.collect(fresh, run_report), settings, use_llm=use_llm)
+    logging.getLogger(__name__).info("monitoring summary (%s):\n%s", result.source, result.text)
+    _raise_on_failures(
+        "monitor", [a.line() for a in result.anomalies if a.kind in BLOCKING_ANOMALIES]
+    )
+    return {"summary": result.as_dict(), "freshness": fresh, "runs": run_report}
