@@ -20,13 +20,24 @@ only their load freshness and emptiness are checked.
 
 The queries are plain SQL over a DB-API connection, so the same code runs on
 Postgres in production and on SQLite in unit tests (`schema=None`).
+
+    python -m railfall.monitoring.freshness                 # every table
+    python -m railfall.monitoring.freshness --table stations --json
+    python -m railfall.monitoring.freshness --report freshness.json
+
+It connects as the read-only transformer role. Exit code 0 only when every
+selected table is fresh.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 
 from railfall.load.audit import LOG_TABLE
@@ -268,3 +279,43 @@ def check(
     return [
         check_table(conn, rules[n], now=now, schema=schema, placeholder=placeholder) for n in names
     ]
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def format_table(results: Sequence[Freshness]) -> str:
+    lines = []
+    for r in results:
+        period = r.latest_period.isoformat() if r.latest_period else "-"
+        age = f"{r.load_age_hours:g} h" if r.load_age_hours is not None else "-"
+        rows = "-" if r.rows is None else str(r.rows)
+        line = f"{r.status.upper():<8} {r.table:<24} rows={rows:<8} loaded={age:<9} latest={period}"
+        lines.append(line + "".join(f"\n         - {reason}" for reason in r.reasons))
+    fresh = sum(r.ok for r in results)
+    lines.append(f"{fresh}/{len(results)} tables fresh")
+    return "\n".join(lines)
+
+
+def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
+    import psycopg
+
+    from railfall.transform.verify import transformer_dsn
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--table", action="append", choices=sorted(RULES), dest="tables")
+    parser.add_argument("--json", action="store_true", help="print the results as JSON")
+    parser.add_argument("--report", type=Path, default=None, help="write the results as JSON")
+    args = parser.parse_args(argv)
+
+    with psycopg.connect(transformer_dsn(env), connect_timeout=10) as conn:
+        results = check(conn, args.tables)
+    payload = json.dumps([r.as_dict() for r in results], indent=2)
+    if args.report:
+        args.report.write_text(payload + "\n")
+    print(payload if args.json else format_table(results))
+    return 0 if all(r.ok for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

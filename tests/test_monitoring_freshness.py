@@ -198,3 +198,13 @@ def test_check_without_audit_log_reports_no_load(db):
 def test_check_refuses_tables_without_a_rule(db):
     with pytest.raises(ValueError, match="no freshness rule for: nope"):
         fr.check(db, ["nope"], now=NOW)
+
+
+def test_format_table_lists_reasons_and_a_summary():
+    ok = fr.evaluate(MONTHLY, rows=3, last_loaded_at=NOW, latest_period=date(2026, 10, 1), now=NOW)
+    stale = fr.evaluate(STATIONS, rows=4, last_loaded_at=None, latest_period=None, now=NOW)
+    text = fr.format_table([ok, stale])
+    assert text.splitlines()[0].startswith("OK       punctuality_monthly")
+    assert "STALE    stations" in text
+    assert "         - no successful load recorded" in text
+    assert text.endswith("1/2 tables fresh")
