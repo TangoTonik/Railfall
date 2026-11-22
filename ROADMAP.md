@@ -44,6 +44,6 @@ of their endpoints.
 ## Week 4 · Delivery & polish
 - [x] Day 16 — Metabase in Docker Compose with dashboards provisioned as code
 - [x] Day 17 — Statistical analysis on the real marts: does bad weather significantly lower punctuality?
-- [ ] Day 18 — Monitoring (run metrics, freshness checks) + optional LLM anomaly summaries (off by default)
+- [x] Day 18 — Monitoring (run metrics, freshness checks) + optional LLM anomaly summaries (off by default)
 - [ ] Day 19 — Hardening: retries, failure scenarios tested in e2e, `make up` one-command start
 - [ ] Day 20 — Final write-up with real results and charts, architecture diagram, v1.0.0 release
