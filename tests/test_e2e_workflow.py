@@ -397,3 +397,19 @@ def test_monitor_result_is_asserted_in_e2e(steps):
     assert '"monitor_warehouse"' in run
     assert "$m.freshness" in run and "$m.summary.anomalies" in run
     assert '$m.summary.source == "rules"' in run, "the LLM wording must stay off in e2e"
+
+
+def test_host_monitor_runs_after_the_dag_and_is_compared_to_it(steps):
+    dag = _index(steps, "DAG=railfall_pipeline")
+    monitor = _index(steps, "make --no-print-directory monitor MONITOR_DIR=monitoring-reports")
+    assert monitor > dag
+    run = steps[monitor]["run"]
+    assert "dag-pipeline.json" in run and '"monitor_warehouse"' in run
+    assert '.source == "rules"' in run
+
+
+def test_llm_fallback_is_exercised_against_a_closed_port(steps):
+    run = steps[_index(steps, "MONITOR_DIR=monitoring-llm")]["run"]
+    assert "LLM_SUMMARY_ENABLED=1" in run
+    assert "127.0.0.1" in run, "the fallback must hit a real closed port, not a fake server"
+    assert '.source == "rules"' in run and ".llm_error != null" in run

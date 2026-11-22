@@ -398,6 +398,38 @@ jobs:
                    | {table, rows}] | sort_by(.table))
             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-dag.json
 
+      - name: make monitor agrees with the DAG's monitor task
+        # Same checks from the host CLI: six fresh, non-empty raw tables, a clean
+        # latest load run, rule-based wording, and the same anomalies the DAG saw.
+        # The exit code is 1 when a publisher lags (stale), so it is judged by the reports.
+        run: |
+          make --no-print-directory monitor MONITOR_DIR=monitoring-reports || true
+          cat monitoring-reports/summary.json
+          jq -e '([.[].table] | sort) == ["punctuality_monthly", "route_departments",
+              "route_weather_monthly", "stations", "weather_daily", "weather_monthly"]
+            and all(.[]; .rows > 0 and .load_age_hours < 36)' monitoring-reports/freshness.json
+          jq -e '.runs[0].ok and (.runs[0].failed | length == 0)' monitoring-reports/runs.json
+          jq -e --slurpfile dag dag-pipeline.json '
+            .source == "rules" and .llm_error == null
+            and ([.anomalies[].kind] | all(. != "failed" and . != "missing" and . != "empty"))
+            and ([.anomalies[] | {kind, table}] | sort)
+              == ([$dag[0].tasks[] | select(.task_id == "monitor_warehouse")
+                   | .result.summary.anomalies[] | {kind, table}] | sort)' \
+            monitoring-reports/summary.json
+
+      - name: LLM wording enabled but unreachable falls back to the digest
+        # Nothing listens on port 9: the opt-in path must degrade to the rule-based
+        # digest, never fail the run or lose an anomaly.
+        run: |
+          make --no-print-directory monitor MONITOR_DIR=monitoring-llm \
+            LLM_SUMMARY_ENABLED=1 LLM_URL=http://127.0.0.1:9 LLM_TIMEOUT_S=5 || true
+          jq -e --slurpfile off monitoring-reports/summary.json '
+            .source == "rules" and .text == .digest
+            and ([.anomalies[] | {kind, table}] | sort)
+              == ([$off[0].anomalies[] | {kind, table}] | sort)
+            and (if (.anomalies | length) > 0 then .llm_error != null else true end)' \
+            monitoring-llm/summary.json
+
       - name: Great Expectations checkpoint agrees with the DAG's gate
         # Same suites, run from the CLI as the transformer role outside Airflow:
         # every raw table passes and the per-table results match the DAG's XCom.
@@ -438,6 +470,8 @@ jobs:
             quality-*.json
             quality-*.md
             canary.json
+            monitoring-reports/*.json
+            monitoring-llm/*.json
           if-no-files-found: ignore
 
       - name: dbt reaches the warehouse as the transformer role
