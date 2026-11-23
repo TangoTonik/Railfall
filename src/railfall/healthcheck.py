@@ -4,6 +4,7 @@ Used by the `e2e` workflow right after `docker compose up`, and handy locally:
 
     python -m railfall.healthcheck --wait 120
     python -m railfall.healthcheck --write   # also prove we can write and read back
+    python -m railfall.healthcheck --all     # also Airflow and Metabase (`make up`)
 
 Exit code 0 means every service answered; 1 means at least one did not.
 """
@@ -11,6 +12,7 @@ Exit code 0 means every service answered; 1 means at least one did not.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 import urllib.request
@@ -80,6 +82,47 @@ def check_lake_bucket(settings: Settings) -> CheckResult:
     return CheckResult("lake-bucket", True, settings.lake_bucket)
 
 
+def _get_json(url: str, timeout: float = 5.0) -> tuple[int, object]:
+    """GET a JSON endpoint; non-JSON bodies come back as None."""
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - fixed scheme
+        status, body = resp.status, resp.read()
+    try:
+        return status, json.loads(body)
+    except ValueError:
+        return status, None
+
+
+def check_airflow(settings: Settings) -> CheckResult:
+    """Airflow's /health: both the metadata database and the scheduler must be healthy.
+
+    The webserver answers as soon as it boots, but a dead scheduler means no DAG
+    ever runs, so a 200 alone is not enough.
+    """
+    try:
+        status, body = _get_json(settings.airflow_url + "/health")
+    except OSError as exc:
+        return CheckResult("airflow", False, _first_line(exc))
+    if not isinstance(body, dict):
+        return CheckResult("airflow", False, f"HTTP {status}, unexpected body")
+    parts = {}
+    for component in ("metadatabase", "scheduler"):
+        info = body.get(component)
+        parts[component] = info.get("status") if isinstance(info, dict) else None
+    ok = status == 200 and all(v == "healthy" for v in parts.values())
+    detail = ", ".join(f"{k} {v or 'missing'}" for k, v in parts.items())
+    return CheckResult("airflow", ok, detail)
+
+
+def check_metabase(settings: Settings) -> CheckResult:
+    """Metabase's /api/health answers {"status": "ok"} once migrations are done."""
+    try:
+        status, body = _get_json(settings.metabase_url + "/api/health")
+    except OSError as exc:
+        return CheckResult("metabase", False, _first_line(exc))
+    state = body.get("status") if isinstance(body, dict) else None
+    return CheckResult("metabase", status == 200 and state == "ok", f"HTTP {status}, {state}")
+
+
 SMOKE_PREFIX = "_healthcheck/"
 
 
@@ -131,6 +174,11 @@ DEFAULT_CHECKS: tuple[Callable[[Settings], CheckResult], ...] = (
     check_lake_bucket,
 )
 
+SERVICE_CHECKS: tuple[Callable[[Settings], CheckResult], ...] = (
+    check_airflow,
+    check_metabase,
+)
+
 WRITE_CHECKS: tuple[Callable[[Settings], CheckResult], ...] = (
     check_lake_roundtrip,
     check_warehouse_write,
@@ -173,9 +221,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="also write to the lake and warehouse and read back (leaves nothing behind)",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="also check Airflow (webserver + scheduler) and Metabase",
+    )
     args = parser.parse_args(argv)
 
-    checks = DEFAULT_CHECKS + WRITE_CHECKS if args.write else DEFAULT_CHECKS
+    checks = DEFAULT_CHECKS
+    if args.all:
+        checks += SERVICE_CHECKS
+    if args.write:
+        checks += WRITE_CHECKS
     results = run_checks(Settings.from_env(), checks, wait_s=args.wait, interval_s=args.interval)
     for r in results:
         print(f"[{'ok' if r.ok else 'FAIL':>4}] {r.name:<12} {r.detail}")

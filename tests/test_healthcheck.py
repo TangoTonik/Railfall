@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -160,8 +161,97 @@ def test_warehouse_write_unreachable_is_reported_not_raised():
     assert result.name == "warehouse-write" and not result.ok
 
 
-@pytest.mark.parametrize(("flag", "expected"), [([], 3), (["--write"], 5)])
-def test_main_write_flag_adds_write_checks(monkeypatch, flag, expected):
+@pytest.fixture
+def json_endpoint():
+    """Serve canned JSON bodies by path: `routes[path] = (status, body)`."""
+    routes: dict[str, tuple[int, object]] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - stdlib API
+            status, body = routes.get(self.path, (404, {"error": "not found"}))
+            payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", routes
+    server.shutdown()
+
+
+def _airflow_health(scheduler: str, metadatabase: str = "healthy") -> dict:
+    return {
+        "metadatabase": {"status": metadatabase},
+        "scheduler": {"status": scheduler, "latest_scheduler_heartbeat": "2026-11-23T10:00:00"},
+        "triggerer": {"status": None},
+    }
+
+
+def test_airflow_healthy(json_endpoint):
+    url, routes = json_endpoint
+    routes["/health"] = (200, _airflow_health("healthy"))
+    result = healthcheck.check_airflow(Settings(airflow_url=url))
+    assert result == CheckResult("airflow", True, "metadatabase healthy, scheduler healthy")
+
+
+def test_airflow_dead_scheduler_fails_even_with_http_200(json_endpoint):
+    url, routes = json_endpoint
+    routes["/health"] = (200, _airflow_health("unhealthy"))
+    result = healthcheck.check_airflow(Settings(airflow_url=url))
+    assert not result.ok and "scheduler unhealthy" in result.detail
+
+
+def test_airflow_non_json_body_fails(json_endpoint):
+    url, routes = json_endpoint
+    routes["/health"] = (200, b"<html>booting</html>")
+    result = healthcheck.check_airflow(Settings(airflow_url=url))
+    assert not result.ok and "unexpected body" in result.detail
+
+
+def test_airflow_missing_component_fails(json_endpoint):
+    url, routes = json_endpoint
+    routes["/health"] = (200, {"metadatabase": {"status": "healthy"}})
+    result = healthcheck.check_airflow(Settings(airflow_url=url))
+    assert not result.ok and "scheduler missing" in result.detail
+
+
+def test_airflow_unreachable():
+    result = healthcheck.check_airflow(Settings(airflow_url=f"http://127.0.0.1:{_free_port()}"))
+    assert result.name == "airflow" and not result.ok and result.detail
+
+
+def test_metabase_ok(json_endpoint):
+    url, routes = json_endpoint
+    routes["/api/health"] = (200, {"status": "ok"})
+    result = healthcheck.check_metabase(Settings(metabase_url=url))
+    assert result == CheckResult("metabase", True, "HTTP 200, ok")
+
+
+def test_metabase_still_migrating_is_not_ok(json_endpoint):
+    """Metabase answers 503 {"status": "initializing"} until its migrations finish."""
+    url, routes = json_endpoint
+    routes["/api/health"] = (503, {"status": "initializing", "progress": 0.4})
+    result = healthcheck.check_metabase(Settings(metabase_url=url))
+    assert result.name == "metabase" and not result.ok and "503" in result.detail
+
+
+def test_metabase_url_follows_the_port():
+    assert Settings.from_env({"METABASE_PORT": "3100"}).metabase_url == "http://localhost:3100"
+    env = {"METABASE_URL": "http://bi.local:3000/"}
+    assert Settings.from_env(env).metabase_url == "http://bi.local:3000"
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [([], 3), (["--write"], 5), (["--all"], 5), (["--all", "--write"], 7)],
+)
+def test_main_flags_add_checks(monkeypatch, flag, expected):
     seen = {}
 
     def fake_run(settings, checks, **kwargs):

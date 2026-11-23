@@ -29,6 +29,8 @@ class Settings:
     airflow_url: str = "http://localhost:8080"
     airflow_user: str = "admin"
     airflow_password: str = field(default="admin", repr=False)
+    # Metabase, only probed by the health checks (bi.metabase has its own settings).
+    metabase_url: str = "http://localhost:3000"
     # Optional plain-language anomaly summaries from a *local* LLM (Ollama API).
     # Off by default: the rule-based digest is always produced, the LLM only
     # rewords it, and nothing leaves the machine.
@@ -94,6 +96,10 @@ class Settings:
             ).rstrip("/"),
             airflow_user=env.get("AIRFLOW_ADMIN_USER", defaults.airflow_user),
             airflow_password=env.get("AIRFLOW_ADMIN_PASSWORD", defaults.airflow_password),
+            metabase_url=env.get(
+                "METABASE_URL",
+                f"http://localhost:{env.get('METABASE_PORT', '3000')}",
+            ).rstrip("/"),
             llm_summary_enabled=_bool("LLM_SUMMARY_ENABLED", defaults.llm_summary_enabled),
             llm_url=env.get("LLM_URL", defaults.llm_url).rstrip("/"),
             llm_model=env.get("LLM_MODEL", defaults.llm_model),
