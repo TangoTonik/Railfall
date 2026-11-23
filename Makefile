@@ -6,6 +6,13 @@
 -include .env
 export
 
+# No default provenance attestation on local builds. It is stamped with the
+# build time, so every rebuild of an unchanged image got a new digest and
+# `make up` recreated MinIO and Airflow. `provenance: false` in
+# docker-compose.yml is not honoured by every Compose release (it was ignored
+# on the GitHub runner); this buildx variable is.
+BUILDX_NO_DEFAULT_ATTESTATIONS ?= 1
+
 COMPOSE ?= docker compose
 PYTHON ?= python
 WAIT ?= 60

@@ -230,3 +230,11 @@ def test_monitor_writes_both_reports_then_summarises_them():
     assert "-m railfall.monitoring.runs --report out/runs.json" in lines[1]
     assert "-m railfall.monitoring.summary --freshness out/freshness.json" in lines[2]
     assert "--report out/summary.json --no-llm" in out
+
+
+def test_builds_skip_default_attestations():
+    """Rebuilding an unchanged image must keep its digest, or `make up` recreates
+    the containers (the e2e idempotency check). Check what a recipe's shell -
+    and so `docker compose build` - actually sees."""
+    out = _make("--eval", "print-attest: ; @echo $$BUILDX_NO_DEFAULT_ATTESTATIONS", "print-attest")
+    assert out.strip() == "1"

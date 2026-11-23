@@ -9,6 +9,8 @@ x-minio-image: &minio-image
     context: ./infra/minio
     # No provenance attestation: it is stamped with the build time, so every
     # rebuild would get a new image digest and `make up` would recreate MinIO.
+    # Some Compose releases ignore this key; the Makefile also exports
+    # BUILDX_NO_DEFAULT_ATTESTATIONS=1, which buildx always honours.
     provenance: false
     args:
       MINIO_RELEASE: RELEASE.2024-10-13T13-34-11Z

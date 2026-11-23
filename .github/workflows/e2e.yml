@@ -794,6 +794,8 @@ jobs:
         # The second run must change nothing: Terraform has no drift and the
         # containers are reused, not recreated.
         run: |
+          docker compose version
+          docker buildx version
           make up WAIT=180 | tee up-1.log
           grep -q "^Airflow   http://localhost:8080" up-1.log
           before=$(docker compose --profile airflow --profile bi ps -q | sort)
