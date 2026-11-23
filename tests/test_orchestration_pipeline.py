@@ -99,8 +99,10 @@ def test_load_warehouse_reports_every_table_then_fails(monkeypatch, tmp_path) ->
 
     seen = {}
 
-    def fake_run(spark, conn, *, root, names, years, schema):
-        seen.update(conn=conn, root=root, names=names, years=years, schema=schema)
+    def fake_run(spark, conn, *, root, names, years, schema, reconnect):
+        seen.update(
+            conn=conn, root=root, names=names, years=years, schema=schema, reconnect=reconnect
+        )
         return [
             LoadResult("stations", ok=True, target="raw.stations", staged=3, run_id="r1"),
             LoadResult("weather_daily", ok=False, error="UndefinedTable: boom", run_id="r1"),
@@ -118,7 +120,22 @@ def test_load_warehouse_reports_every_table_then_fails(monkeypatch, tmp_path) ->
         "names": None,
         "years": [2025],
         "schema": "raw",
+        # An injected connection belongs to the caller: never swapped behind its back.
+        "reconnect": None,
     }
+
+
+def test_own_load_connection_reconnects_with_the_loader_name(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "railfall.orchestration.retry.connect", lambda dsn, **kw: calls.append((dsn, kw))
+    )
+    reconnect = pipeline._reconnect(SETTINGS, None)
+    assert reconnect is not None
+    reconnect()
+    assert calls == [
+        (SETTINGS.warehouse_dsn, {"autocommit": True, "application_name": "railfall-load"})
+    ]
 
 
 def test_verify_warehouse_summary_is_xcom_safe(monkeypatch, tmp_path) -> None:

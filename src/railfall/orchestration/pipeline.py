@@ -17,7 +17,8 @@ development and tests.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+import functools
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date
@@ -138,10 +139,23 @@ def _warehouse(settings: Settings, conn) -> Iterator:
     if conn is not None:
         yield conn
         return
+    from railfall.load.job import APPLICATION_NAME
     from railfall.orchestration.retry import connect
 
-    with connect(settings.warehouse_dsn, autocommit=True) as own:
+    with connect(settings.warehouse_dsn, autocommit=True, application_name=APPLICATION_NAME) as own:
         yield own
+
+
+def _reconnect(settings: Settings, conn) -> Callable | None:
+    """How the load replaces a connection the warehouse dropped; never for an injected one."""
+    if conn is not None:
+        return None
+    from railfall.load.job import APPLICATION_NAME
+    from railfall.orchestration.retry import connect
+
+    return functools.partial(
+        connect, settings.warehouse_dsn, autocommit=True, application_name=APPLICATION_NAME
+    )
 
 
 def load_warehouse(
@@ -173,6 +187,7 @@ def load_warehouse(
             names=tables,
             years=list(years) if years else None,
             schema=schema,
+            reconnect=_reconnect(settings, conn),
         )
     _raise_on_failures("load warehouse", [f"{r.table}: {r.error}" for r in results if not r.ok])
     return [asdict(r) for r in results]

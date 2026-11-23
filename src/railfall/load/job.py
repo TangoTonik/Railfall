@@ -24,6 +24,11 @@ if any table failed. Re-running the job with the same silver changes nothing.
 
 Every run is then appended to `raw._load_runs` (`railfall.load.audit`), failed
 tables included, under one `run_id` that every result in the JSON summary carries.
+
+A warehouse restart (or a killed backend) in the middle of a run breaks the
+connection for good. Given a `reconnect` callable, the run opens a fresh
+connection before the next table and before the audit write, so only the table
+that was in flight fails, it is still logged, and re-running repairs it.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ import json
 import sys
 import time
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +56,7 @@ if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 
 YEAR = "year"
+APPLICATION_NAME = "railfall-load"  # shows in pg_stat_activity, so a DBA can find the loader
 
 
 @dataclass(frozen=True)
@@ -187,6 +193,42 @@ def log_entry(
     )
 
 
+def usable(conn: Any) -> bool:
+    """False once psycopg knows the connection is gone (closed by us or broken under us)."""
+    return not (getattr(conn, "closed", False) or getattr(conn, "broken", False))
+
+
+class Warehouse:
+    """The run's connection, replaced through `reconnect` once it is broken.
+
+    Connections it opened itself are closed by `close()`; the one it was given
+    belongs to the caller.
+    """
+
+    def __init__(self, conn: Any, reconnect: Callable[[], Any] | None = None) -> None:
+        self._conn = conn
+        self._reconnect = reconnect
+        self._owned: list[Any] = []
+        self.reconnects = 0
+
+    def get(self) -> Any:
+        if self._reconnect is not None and not usable(self._conn):
+            print(
+                "warehouse connection lost, reconnecting for the next table",
+                file=sys.stderr,
+            )
+            self._conn = self._reconnect()
+            self._owned.append(self._conn)
+            self.reconnects += 1
+        return self._conn
+
+    def close(self) -> None:
+        for conn in self._owned:
+            if usable(conn):
+                conn.close()
+        self._owned.clear()
+
+
 def run(
     spark: SparkSession,
     conn: psycopg.Connection,
@@ -196,19 +238,28 @@ def run(
     years: Sequence[int] | None = None,
     schema: str = "raw",
     run_id: uuid.UUID | None = None,
+    reconnect: Callable[[], psycopg.Connection] | None = None,
 ) -> list[LoadResult]:
-    """Load the selected tables (default: all) in silver dependency order, then log the run."""
+    """Load the selected tables (default: all) in silver dependency order, then log the run.
+
+    With `reconnect`, a connection lost while one table loads is replaced before
+    the next table and before the audit write (see the module docstring).
+    """
     selected = set(names) if names else set(TABLES)
     unknown = sorted(selected - set(TABLES))
     if unknown:
         raise ValueError(f"unknown silver tables: {unknown}")
     run_id = run_id or audit.new_run_id()
-    timed = [
-        _timed_load(spark, conn, table, root=root, years=years, schema=schema)
-        for name, table in TABLES.items()
-        if name in selected
-    ]
-    audit.record(conn, (log_entry(run_id, *t) for t in timed), schema=schema)
+    warehouse = Warehouse(conn, reconnect)
+    try:
+        timed = [
+            _timed_load(spark, warehouse.get(), table, root=root, years=years, schema=schema)
+            for name, table in TABLES.items()
+            if name in selected
+        ]
+        audit.record(warehouse.get(), (log_entry(run_id, *t) for t in timed), schema=schema)
+    finally:
+        warehouse.close()
     return [LoadResult(**(asdict(r) | {"run_id": str(run_id)})) for r, _, _ in timed]
 
 
@@ -240,8 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    import psycopg
-
+    from railfall.orchestration.retry import connect
     from railfall.spark.session import build_session, lake_uri
 
     settings = Settings.from_env()
@@ -252,10 +302,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         root = lake_uri(settings).rstrip("/")
         spark = build_session(settings, app_name="railfall-load")
     run_id = audit.new_run_id()
-    try:
+
+    def open_warehouse() -> psycopg.Connection:
         # Autocommit: each table opens (and commits or rolls back) its own transaction.
-        with psycopg.connect(settings.warehouse_dsn, autocommit=True) as conn:
-            results = run(spark, conn, root=root, names=args.table, years=args.year, run_id=run_id)
+        return connect(settings.warehouse_dsn, autocommit=True, application_name=APPLICATION_NAME)
+
+    try:
+        with open_warehouse() as conn:
+            results = run(
+                spark,
+                conn,
+                root=root,
+                names=args.table,
+                years=args.year,
+                run_id=run_id,
+                reconnect=open_warehouse,
+            )
     finally:
         spark.stop()
 
