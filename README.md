@@ -195,6 +195,30 @@ Its Spark tasks get a 60-minute timeout; every step is idempotent, so a retry or
 a re-triggered day converges on the same lake and warehouse. Set
 `AIRFLOW_USE_JOB_SCHEDULE=false` to run only what you trigger by hand (e2e does).
 
+#### Failure handling
+
+Every task shares one policy (`railfall.orchestration.retry`):
+
+| Failure | Examples | What happens |
+|---|---|---|
+| transient | portal 5xx/timeout, MinIO down or `SlowDown`, Postgres restarting | 3 retries, 2 → 4 → 8 min (cap 20) |
+| permanent | contract/quality gate failed, `AccessDenied`, unknown department, `ValueError` | fails on try 1 (`AirflowFailException`) |
+| unknown | anything else | treated as transient |
+
+Warehouse connections also retry on their own (2 + 4 + 8 s) before Airflow
+sees anything, but give up at once on bad credentials. If a backend dies
+mid-load, only the table in flight fails: the loader reconnects for the
+remaining tables, still writes the audit row, and a plain re-run repairs it.
+
+The e2e workflow proves each case against the real stack:
+
+- `departments: ["20"]` → `railfall_ingest` is red on try 1, SNCF still lands;
+- MinIO stopped before a run → ingest goes `up_for_retry`, MinIO comes back,
+  try 2 succeeds and nothing is duplicated;
+- a loader backend terminated while blocked on a lock → one failed table,
+  rollback leaves the warehouse untouched, the re-run changes nothing;
+- `make up` run twice → the second run recreates no container.
+
 ### Transformations (dbt)
 
 The dbt project lives in `dbt/` and runs on `dbt-postgres` as the

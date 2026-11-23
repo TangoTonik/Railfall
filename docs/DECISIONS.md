@@ -721,3 +721,38 @@ must report the same anomalies, and the opt-in path is run against a closed
 port to prove the fallback. Data lag is reported but not asserted: it depends
 on the publishers, not on this code. No Ollama in CI: pulling a model would
 add minutes and gigabytes to every run to test wording nobody can assert.
+
+## Day 19 — Hardening: retries, failure scenarios, one-command start
+
+**Retries are for what time can fix.** Airflow retries every failure alike by
+default, so a contract violation used to turn red only after 5 + 10 + 20 minutes
+of replaying the same bad file. `fail_fast` now sorts errors: network, timeouts,
+MinIO/Postgres unavailable and S3 `SlowDown`/5xx are retried with exponential
+backoff (2, 4, 8 min, capped at 20); quality gates, refused S3 requests and
+programming errors raise `AirflowFailException` on try 1. Anything unrecognised
+counts as transient: an extra retry costs minutes, a wrongly skipped one a
+night of data. Exceptions that know better carry a `retryable` flag.
+
+**Connection retries live in the task as well as in Airflow.** A Postgres
+restart takes seconds; waiting minutes for an Airflow retry (and re-running
+Spark) is wasteful. `connect()` tries four times over ~14 s, except on bad
+credentials, which waiting never fixes.
+
+**A dead connection costs one table, not the run.** The loader commits table by
+table, so a backend killed mid-merge rolls back only that table. The run now
+reconnects before the next table and before the audit write, so the failure is
+still recorded in `raw._load_runs` and a plain re-run repairs it. The loader
+sets `application_name` so operators (and e2e) can find it.
+
+**Failure scenarios are real, not simulated.** e2e stops the real MinIO
+container, terminates the real loader backend while it waits on a real lock,
+and feeds a real invalid department. Each asserts the exact outcome: task
+state, try number, which tables failed, an untouched warehouse, and no
+duplicates after recovery. Injecting faults through mocks would only test the
+mocks.
+
+**`make up` is idempotent.** It starts Postgres, MinIO, Terraform, Airflow and
+Metabase and waits for `healthcheck --all`. A second run must recreate nothing,
+which needed pinned image digests and `BUILDX_NO_DEFAULT_ATTESTATIONS` (buildx
+attestations changed the image digest on every rebuild). e2e asserts the
+container IDs are unchanged.
