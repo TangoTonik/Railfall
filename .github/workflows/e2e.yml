@@ -369,6 +369,58 @@ jobs:
             '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
              and all(.[]; .ok and .duplicate_keys == 0)' verify-load-3.json
 
+      - name: "Failure scenario: a warehouse backend killed mid-load fails one table, rerun repairs"
+        # An admin session holds an exclusive lock on raw.punctuality_monthly, so
+        # the loader blocks inside that table's merge transaction. Its backend is
+        # then terminated for real: only that table may fail, the loader must
+        # reconnect for the remaining tables and still audit the run, and a plain
+        # re-run must restore the warehouse exactly as verify-load-1 saw it.
+        run: |
+          set -euo pipefail
+          psql_admin() {
+            docker compose exec -T postgres psql -U rail -d warehouse -v ON_ERROR_STOP=1 -tA "$@"
+          }
+          docker compose exec -T -e PGAPPNAME=railfall-e2e-lock postgres \
+            psql -U rail -d warehouse -c "begin;
+              lock table raw.punctuality_monthly in access exclusive mode;
+              select pg_sleep(600);" > lock.log 2>&1 &
+          lock_pid=$!
+          make --no-print-directory load LOAD_ARGS="--report load-4.json" > load-4.log 2>&1 &
+          load_pid=$!
+          killed=""
+          for _ in $(seq 1 300); do
+            killed=$(psql_admin -c "select pg_terminate_backend(pid) from pg_stat_activity
+              where application_name = 'railfall-load' and wait_event_type = 'Lock'")
+            [ -n "$killed" ] && break
+            sleep 1
+          done
+          psql_admin -c "select pg_terminate_backend(pid) from pg_stat_activity
+            where application_name = 'railfall-e2e-lock'"
+          wait "$lock_pid" || true
+          if wait "$load_pid"; then load_rc=0; else load_rc=$?; fi
+          cat load-4.log
+          test "$killed" = "t" || { echo "the loader never blocked on the lock"; exit 1; }
+          test "$load_rc" -ne 0 || { echo "a load with a failed table must exit non-zero"; exit 1; }
+          cat load-4.json
+          # Only the table in flight failed, on the terminated connection.
+          jq -e 'length == 6
+            and ([.[] | select(.ok | not) | .table] == ["punctuality_monthly"])
+            and (.[] | select(.table == "punctuality_monthly") | .error
+                 | test("OperationalError|terminat|connection"; "i"))' load-4.json
+          grep -q "reconnecting for the next table" load-4.log
+          # The run is still in the audit log, failed table included.
+          run_id=$(jq -r '.[0].run_id' load-4.json)
+          test "$(psql_admin -c "select count(*) || '/' || count(*) filter (where not ok)
+            from raw._load_runs where run_id = '$run_id'")" = "6/1"
+          # The failed transaction rolled back: nothing half-merged, no duplicates.
+          make --no-print-directory verify-load LOAD_ARGS="--report verify-load-4.json"
+          jq -e --slurpfile one verify-load-1.json \
+            '[.[] | {table, rows, by_year}] == [$one[0][] | {table, rows, by_year}]
+             and all(.[]; .ok and .duplicate_keys == 0)' verify-load-4.json
+          # A plain re-run is all it takes: everything ok, nothing to change.
+          make --no-print-directory load LOAD_ARGS="--report load-5.json"
+          jq -e 'length == 6 and all(.[]; .ok and .inserted == 0 and .deleted == 0)' load-5.json
+
       - name: Restart Airflow for the full pipeline
         # Same image (cached) and metadata DB as before; Spark now runs inside
         # the worker, so the CLI Spark steps above are already finished.

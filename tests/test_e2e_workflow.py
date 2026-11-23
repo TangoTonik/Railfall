@@ -454,3 +454,20 @@ def test_failure_scenario_proves_a_transient_outage_is_retried(steps):
     # Bronze is re-verified after the recovered run.
     after = " ".join(s.get("run", "") for s in steps[outage + 1 : rm])
     assert "verify-sncf INGEST_ARGS=--list" in after
+
+
+def test_failure_scenario_kills_a_real_loader_backend(steps):
+    """Day 19: a terminated warehouse connection fails one table; a re-run repairs it."""
+    incremental = _index(steps, "load-3.json")
+    killed = _index(steps, "load-4.json")
+    airflow = next(i for i, s in enumerate(steps) if "Restart Airflow" in s.get("name", ""))
+    assert incremental < killed < airflow, "needs a loaded warehouse, before Airflow takes over"
+    run = steps[killed]["run"]
+    # The loader is blocked by a real lock, then its real backend is terminated.
+    assert "lock table raw.punctuality_monthly in access exclusive mode" in run
+    assert run.index("make --no-print-directory load") < run.index("pg_terminate_backend")
+    assert "application_name = 'railfall-load'" in run
+    # One failed table, still audited, nothing half-merged, a re-run is clean.
+    assert '["punctuality_monthly"]' in run and "raw._load_runs" in run and '"6/1"' in run
+    assert run.index("verify-load-4.json") < run.index("load-5.json")
+    assert ".duplicate_keys == 0" in run
