@@ -189,6 +189,20 @@ def test_cli_writes_report_and_exit_code(tmp_path, capsys):
     assert code == 1
 
 
+def test_cli_expect_failed_passes_only_on_a_failed_run(capsys):
+    failed = client(FakeAirflow(states=("failed",)))
+    assert main([DAG, "--poll", "1", "--expect", "failed"], client=failed) == 0
+    succeeded = client(FakeAirflow())
+    assert main([DAG, "--poll", "1", "--expect", "failed"], client=succeeded) == 1
+    assert "expected failed, got success" in capsys.readouterr().err
+
+
+def test_cli_expect_failed_does_not_accept_a_timeout():
+    """A run still `running` at the deadline proves nothing about failing."""
+    slow = client(FakeAirflow(states=("running",) * 50))
+    assert main([DAG, "--poll", "1", "--timeout", "2", "--expect", "failed"], client=slow) == 1
+
+
 def test_cli_rejects_non_object_conf():
     with pytest.raises(SystemExit):
         main([DAG, "--conf", "[1]"], client=client(FakeAirflow()))

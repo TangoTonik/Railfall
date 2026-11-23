@@ -422,3 +422,18 @@ def test_one_command_start_runs_last_and_twice(steps):
     assert up > _index(steps, "docker compose down\n")
     assert run.count("make up WAIT=") == 2
     assert "healthcheck --all" in run and "make infra-check" in run
+
+
+def test_failure_scenario_proves_fail_fast_on_the_real_scheduler(steps):
+    """Day 19: a permanent error turns the run red on its first try."""
+    good = _index(steps, "make dag-run DAG=railfall_ingest")
+    bad = _index(steps, "dag-ingest-bad.json")
+    rm = next(i for i, s in enumerate(steps) if "rm --stop" in s.get("run", ""))
+    assert good < bad < rm, "needs the booted scheduler, after the happy path"
+    run = steps[bad]["run"]
+    assert "--expect failed" in run
+    assert '\\"departments\\": [\\"20\\"]' in run, "an invalid department, not a mock"
+    assert ".try_number == 1" in run and "upstream_failed" in run
+    # Bronze is re-verified after the failed run: it must not have left debris.
+    after = " ".join(s.get("run", "") for s in steps[bad + 1 : rm])
+    assert "verify-meteo INGEST_ARGS=--list" in after

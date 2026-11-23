@@ -170,7 +170,10 @@ jobs:
           jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-ingest.json
           jq -e '[.tasks[] | select(.task_id == "ingest_meteo")] | length == 3' dag-ingest.json
           jq -e '[.tasks[].task_id] | unique
-            == ["ingest_meteo", "ingest_sncf", "verify_meteo", "verify_sncf"]' dag-ingest.json
+            == ["ingest_meteo", "ingest_sncf", "meteo_departments", "verify_meteo", "verify_sncf"]' \
+            dag-ingest.json
+          jq -e '.tasks[] | select(.task_id == "meteo_departments")
+            | .result == ["75", "69", "13"]' dag-ingest.json
           # What the tasks returned: bronze already held this partition from the
           # CLI steps, so the DAG lands nothing new (skipped, or replaced if a
           # source republished in between) and its checks cover the same datasets.
@@ -181,6 +184,22 @@ jobs:
             '[.tasks[] | select(.task_id == "verify_meteo") | .result[]]
               | all(.ok and .rows >= 1000)
                 and ([.[].dataset] | sort) == ([$ing[0][].dataset] | sort)' dag-ingest.json
+
+      - name: Failure scenario - a bad department fails fast, without retries
+        run: |
+          # "20" is not a department (Corsica is 2A/2B): a permanent error. The run
+          # must turn red on the first try of meteo_departments, not after the
+          # 2 + 4 + 8 min of retries a transient error gets, and download no
+          # Météo-France file. SNCF is independent and still succeeds.
+          make dag-run DAG=railfall_ingest \
+            DAG_ARGS="--conf '{\"ingest_date\": \"$(date -u +%F)\", \"departments\": [\"20\"]}' --expect failed --timeout 600 --report dag-ingest-bad.json"
+          jq -e '.state == "failed"' dag-ingest-bad.json
+          jq -e '.tasks[] | select(.task_id == "meteo_departments")
+            | .state == "failed" and .try_number == 1' dag-ingest-bad.json
+          jq -e '[.tasks[] | select(.task_id == "ingest_meteo" or .task_id == "verify_meteo")
+            | .state] | length >= 2 and all(. == "upstream_failed")' dag-ingest-bad.json
+          jq -e '[.tasks[] | select(.task_id | endswith("_sncf")) | .state]
+            == ["success", "success"]' dag-ingest-bad.json
 
       - name: DAG run left bronze valid and unduplicated
         run: |

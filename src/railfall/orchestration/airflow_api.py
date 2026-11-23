@@ -8,7 +8,9 @@ real run on the real scheduler, not a `dags test` in-process shortcut:
 
 Steps: wait until the scheduler has parsed the DAG (failing fast on an import
 error for its file), unpause it, create a run, poll until the run reaches a
-terminal state, then report every task instance. Exit code 0 only on `success`.
+terminal state, then report every task instance. Exit code 0 only when the run
+ends in the expected state: `success` by default, `failed` with `--expect failed`
+(the e2e failure scenarios prove a bad run turns red, and how fast).
 
 Only the standard library is used: the client must run on the CI host, which
 has no Airflow installed.
@@ -280,6 +282,12 @@ def main(argv: list[str] | None = None, *, client: AirflowClient | None = None) 
     parser.add_argument(
         "--xcom", action="store_true", help="add each successful task's return value to the report"
     )
+    parser.add_argument(
+        "--expect",
+        choices=sorted(TERMINAL),
+        default="success",
+        help="terminal state that counts as a pass (failure scenarios expect 'failed')",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -312,7 +320,13 @@ def main(argv: list[str] | None = None, *, client: AirflowClient | None = None) 
         with open(args.report, "w") as fh:
             fh.write(payload + "\n")
     print(payload if args.json else _format(report))
-    return 0 if report.ok else 1
+    if report.state != args.expect:
+        if args.expect != "success":
+            print(
+                f"[FAIL] {args.dag_id}: expected {args.expect}, got {report.state}", file=sys.stderr
+            )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
