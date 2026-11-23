@@ -437,3 +437,20 @@ def test_failure_scenario_proves_fail_fast_on_the_real_scheduler(steps):
     # Bronze is re-verified after the failed run: it must not have left debris.
     after = " ".join(s.get("run", "") for s in steps[bad + 1 : rm])
     assert "verify-meteo INGEST_ARGS=--list" in after
+
+
+def test_failure_scenario_proves_a_transient_outage_is_retried(steps):
+    """Day 19: a real lake outage sends the task to up_for_retry, then it recovers."""
+    bad = _index(steps, "dag-ingest-bad.json")
+    outage = _index(steps, "dag-ingest-outage.json")
+    rm = next(i for i, s in enumerate(steps) if "rm --stop" in s.get("run", ""))
+    assert bad < outage < rm
+    run = steps[outage]["run"]
+    # A real outage of the real service, healed while the run waits to retry.
+    assert run.index("docker compose stop minio") < run.index("make dag-run")
+    assert run.index("up_for_retry") < run.index("docker compose start minio")
+    assert run.index("docker compose start minio") < run.index('wait "$dag_pid"')
+    assert ".try_number == 2" in run and '.state == "success"' in run
+    # Bronze is re-verified after the recovered run.
+    after = " ".join(s.get("run", "") for s in steps[outage + 1 : rm])
+    assert "verify-sncf INGEST_ARGS=--list" in after

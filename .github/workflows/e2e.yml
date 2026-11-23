@@ -201,6 +201,43 @@ jobs:
           jq -e '[.tasks[] | select(.task_id | endswith("_sncf")) | .state]
             == ["success", "success"]' dag-ingest-bad.json
 
+      - name: Failure scenario - a lake outage is ridden out by a retry
+        # MinIO is stopped before the run, so both ingest tasks fail their first
+        # try on a real connection error, a transient failure: they must go to
+        # up_for_retry, not failed. MinIO comes back during the 2 min retry
+        # delay and the second try lands the partition; the run ends green.
+        run: |
+          run_id="lake_outage__$(date -u +%Y%m%dT%H%M%S)"
+          docker compose stop minio
+          make dag-run DAG=railfall_ingest \
+            DAG_ARGS="--run-id $run_id --conf '{\"ingest_date\": \"$(date -u +%F)\", \"departments\": [\"75\"]}' --timeout 900 --xcom --report dag-ingest-outage.json" \
+            > dag-ingest-outage.log 2>&1 &
+          dag_pid=$!
+          ti="http://localhost:8080/api/v1/dags/railfall_ingest/dagRuns/$run_id/taskInstances/ingest_sncf"
+          state=""
+          for _ in $(seq 60); do
+            state=$(curl -fsS -u admin:admin "$ti" 2>/dev/null | jq -r '.state' || true)
+            echo "ingest_sncf: ${state:-not yet}"
+            [ "$state" = "up_for_retry" ] && break
+            [ "$state" = "failed" ] || [ "$state" = "success" ] && break
+            sleep 5
+          done
+          docker compose start minio
+          make health WAIT=60
+          wait "$dag_pid" || { cat dag-ingest-outage.log; exit 1; }
+          cat dag-ingest-outage.log
+          test "$state" = "up_for_retry"
+          jq -e '.state == "success"' dag-ingest-outage.json
+          jq -e '.tasks[] | select(.task_id == "ingest_sncf")
+            | .state == "success" and .try_number == 2' dag-ingest-outage.json
+          jq -e '[.tasks[] | select(.state != "success")] | length == 0' dag-ingest-outage.json
+          # The second try found the partition already in bronze from the
+          # earlier runs: nothing new landed, nothing was duplicated.
+          jq -e '[.tasks[] | select(.task_id == "ingest_sncf" or .task_id == "ingest_meteo")
+            | .result[]] | length >= 3
+              and all(.ok and (.status == "skipped" or .status == "replaced"))' \
+            dag-ingest-outage.json
+
       - name: DAG run left bronze valid and unduplicated
         run: |
           make --no-print-directory verify-sncf
