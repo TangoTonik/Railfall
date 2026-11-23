@@ -26,7 +26,9 @@ def _make(*args: str) -> str:
 def test_help_lists_documented_targets():
     out = _make("help")
     targets = (
+        "core",
         "up",
+        "urls",
         "infra",
         "infra-check",
         "access",
@@ -58,8 +60,8 @@ def test_help_lists_documented_targets():
         assert f"  {target} " in out, f"`make help` misses {target}"
 
 
-def test_up_builds_then_waits_then_provisions_with_terraform():
-    out = _make("-n", "up")
+def test_core_builds_then_waits_then_provisions_with_terraform():
+    out = _make("-n", "core")
     order = [
         "docker compose build minio",
         "docker compose up -d --wait postgres minio",
@@ -69,6 +71,27 @@ def test_up_builds_then_waits_then_provisions_with_terraform():
     positions = [out.find(cmd) for cmd in order]
     assert -1 not in positions, positions
     assert positions == sorted(positions)
+
+
+def test_up_starts_every_service_then_checks_them_all():
+    out = _make("-n", "up", "PYTHON=python", "WAIT=7")
+    order = [
+        "docker compose up -d --wait postgres minio",
+        "terraform -chdir=infra/terraform apply",
+        "docker compose --profile airflow up -d --wait airflow-webserver airflow-scheduler",
+        "docker compose --profile bi up -d --wait metabase",
+        "python -m railfall.healthcheck --all --wait 7",
+    ]
+    positions = [out.find(cmd) for cmd in order]
+    assert -1 not in positions, positions
+    assert positions == sorted(positions)
+
+
+def test_urls_follow_the_configured_ports():
+    out = _make("urls", "AIRFLOW_WEB_PORT=8181", "METABASE_PORT=3100", "POSTGRES_PORT=5433")
+    assert "http://localhost:8181" in out
+    assert "http://localhost:3100" in out
+    assert "localhost:5433/" in out
 
 
 def test_infra_check_fails_on_drift():

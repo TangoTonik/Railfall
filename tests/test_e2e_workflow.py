@@ -34,14 +34,14 @@ def test_terraform_is_pinned_and_unwrapped(steps):
 
 def test_terraform_is_installed_before_the_stack_boots(steps):
     install = next(i for i, s in enumerate(steps) if "setup-terraform" in s.get("uses", ""))
-    assert install < _index(steps, "make up")
+    assert install < _index(steps, "make core")
 
 
 def test_drift_is_checked_after_apply_and_after_restart(steps):
     runs = [s.get("run", "") for s in steps]
     checks = [i for i, run in enumerate(runs) if "make infra-check" in run]
     assert len(checks) >= 2
-    assert min(checks) > _index(steps, "make up")
+    assert min(checks) > _index(steps, "make core")
     assert max(checks) >= _index(steps, "docker compose down\n")
 
 
@@ -54,7 +54,7 @@ def test_no_mocks_in_e2e(steps):
 def test_privileges_are_audited_after_apply_and_after_restart(steps):
     audits = [i for i, s in enumerate(steps) if "make access" in s.get("run", "")]
     assert audits, "e2e must run the least-privilege audit"
-    assert min(audits) > _index(steps, "make up")
+    assert min(audits) > _index(steps, "make core")
     assert max(audits) >= _index(steps, "docker compose down\n")
 
 
@@ -63,7 +63,7 @@ def test_sncf_ingestion_is_real_verified_and_rerun(steps):
     ingests = [i for i, r in enumerate(runs) if "make -s ingest-sncf" in r]
     verifies = [i for i, r in enumerate(runs) if "verify-sncf" in r]
     assert len(ingests) == 2, "ingest twice to prove re-runs do not duplicate bronze"
-    assert _index(steps, "make up") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
+    assert _index(steps, "make core") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
     # Row floors are asserted on the real download, not left to the fixtures.
     assert ".rows >= 5000" in runs[ingests[0]] and ".rows >= 2000" in runs[ingests[0]]
     assert "--min-rows" not in "".join(runs)
@@ -74,7 +74,7 @@ def test_meteo_ingestion_is_real_verified_and_rerun(steps):
     ingests = [i for i, r in enumerate(runs) if "make -s ingest-meteo" in r]
     verifies = [i for i, r in enumerate(runs) if "verify-meteo" in r]
     assert len(ingests) == 2, "ingest twice to prove re-runs do not duplicate bronze"
-    assert _index(steps, "make up") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
+    assert _index(steps, "make core") < ingests[0] < verifies[0] < ingests[1] <= verifies[-1]
     # 2-3 real departments, each above the real contract floor.
     first = runs[ingests[0]]
     assert "length == 3" in first and ".rows >= 1000" in first
@@ -162,7 +162,7 @@ def test_incremental_load_repairs_one_year_on_the_real_warehouse(steps):
 
 def test_ingest_dag_is_run_for_real_after_airflow_boots(steps):
     boot = _index(steps, "make airflow")
-    assert boot > _index(steps, "make up"), "Airflow needs the Terraform-provisioned DB"
+    assert boot > _index(steps, "make core"), "Airflow needs the Terraform-provisioned DB"
     dag = _index(steps, "make dag-run DAG=railfall_ingest")
     assert dag > boot
     run = steps[dag]["run"]
@@ -413,3 +413,12 @@ def test_llm_fallback_is_exercised_against_a_closed_port(steps):
     assert "LLM_SUMMARY_ENABLED=1" in run
     assert "127.0.0.1" in run, "the fallback must hit a real closed port, not a fake server"
     assert '.source == "rules"' in run and ".llm_error != null" in run
+
+
+def test_one_command_start_runs_last_and_twice(steps):
+    """`make up` is exercised on the restarted stack, and re-running it is a no-op."""
+    up = _index(steps, "make up WAIT=")
+    run = steps[up]["run"]
+    assert up > _index(steps, "docker compose down\n")
+    assert run.count("make up WAIT=") == 2
+    assert "healthcheck --all" in run and "make infra-check" in run

@@ -31,7 +31,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build up airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats freshness run-metrics monitor logs ps down \
+.PHONY: help env build core up urls airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats freshness run-metrics monitor logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -44,17 +44,30 @@ env: ## Create .env from .env.example if it does not exist
 build: env ## Build the source-built MinIO image
 	$(COMPOSE) build minio
 
-up: build ## Start Postgres + MinIO, wait until healthy, provision them with Terraform
+core: build ## Start Postgres + MinIO, wait until healthy, provision them with Terraform
 	$(COMPOSE) up -d --wait postgres minio
 	$(MAKE) --no-print-directory infra
+
+up: ## One command: core + Terraform + Airflow + Metabase, wait until all healthy
+	$(MAKE) --no-print-directory core
+	$(MAKE) --no-print-directory airflow
+	$(MAKE) --no-print-directory metabase
+	$(PYTHON) -m railfall.healthcheck --all --wait $(WAIT)
+	@$(MAKE) --no-print-directory urls
+
+urls: ## Print where each service of the running stack answers
+	@echo "Airflow   http://localhost:$(or $(AIRFLOW_WEB_PORT),8080)  (user $(or $(AIRFLOW_ADMIN_USER),admin))"
+	@echo "Metabase  http://localhost:$(or $(METABASE_PORT),3000)  (dashboards: make dashboards, once marts exist)"
+	@echo "MinIO     http://localhost:$(or $(MINIO_CONSOLE_PORT),9001)  (bucket $(or $(LAKE_BUCKET),railfall-lake))"
+	@echo "Postgres  localhost:$(or $(POSTGRES_PORT),5432)/$(or $(POSTGRES_DB),warehouse)"
 
 airflow-build: env ## Build the Airflow image (official image + the railfall package)
 	$(COMPOSE) $(AIRFLOW_PROFILE) build airflow-init
 
-airflow: airflow-build ## Start Airflow (after `make up`): migrate its DB, wait until healthy
+airflow: airflow-build ## Start Airflow (after `make core`): migrate its DB, wait until healthy
 	$(COMPOSE) $(AIRFLOW_PROFILE) up -d --wait airflow-webserver airflow-scheduler
 
-metabase: env ## Start Metabase (after `make up`) and wait until it is healthy
+metabase: env ## Start Metabase (after `make core`) and wait until it is healthy
 	$(COMPOSE) $(BI_PROFILE) up -d --wait metabase
 
 dashboards: ## Bootstrap Metabase and provision the dashboards in bi/dashboards (idempotent)

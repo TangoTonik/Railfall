@@ -61,7 +61,7 @@ jobs:
         # Same entry point as local dev; `.env` is exported to Terraform and the
         # health checks too.
         # No public MinIO images exist any more; see infra/minio/Dockerfile.
-        run: make up
+        run: make core
 
       - name: Health-check platform
         run: make health WAIT=60
@@ -151,7 +151,7 @@ jobs:
           test "$(echo "$keys" | wc -l)" -eq 6
 
       - name: Start Airflow (build image, migrate metadata DB, wait healthy)
-        # Needs `make up` first: Terraform owns the Airflow database and role.
+        # Needs `make core` first: Terraform owns the Airflow database and role.
         # Timetable runs are off: unpausing a daily DAG would otherwise start a
         # catch-up run of the latest interval beside the one we trigger.
         run: |
@@ -768,6 +768,24 @@ jobs:
           make --no-print-directory verify-load
           make --no-print-directory verify-staging
           make --no-print-directory verify-marts
+
+      - name: make up starts the whole stack in one command, twice
+        # The documented one-command start, on the restarted volumes: core,
+        # Terraform, Airflow and Metabase, then health checks on all of them.
+        # The second run must change nothing: Terraform has no drift and the
+        # containers are reused, not recreated.
+        run: |
+          make up WAIT=180 | tee up-1.log
+          grep -q "^Airflow   http://localhost:8080" up-1.log
+          before=$(docker compose --profile airflow --profile bi ps -q | sort)
+          make up WAIT=60
+          after=$(docker compose --profile airflow --profile bi ps -q | sort)
+          test "$before" = "$after"
+          make infra-check
+          python -m railfall.healthcheck --all
+          curl -fsS "http://localhost:8080/health" | jq -e \
+            '.metadatabase.status == "healthy" and .scheduler.status == "healthy"'
+          curl -fsS "http://localhost:3000/api/health" | jq -e '.status == "ok"'
 
       - name: Dump service logs
         if: failure()

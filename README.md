@@ -45,7 +45,8 @@ MinIO from pinned source (no public images exist any more), which takes a few
 minutes.
 
 ```bash
-make up       # build, start Postgres + MinIO, wait until healthy, terraform apply
+make up       # one command: Postgres + MinIO + Terraform + Airflow + Metabase, all healthy
+make core     # only Postgres + MinIO + terraform apply (what the pipeline CLIs need)
 make health   # check every service answers
 make access   # prove each pipeline identity can do its job and nothing more
 make infra-check  # fail if the running stack drifted from the Terraform config
