@@ -8,11 +8,13 @@ turns red once nobody is looking any more.
 
 So failures are sorted in two:
 
-* **transient** (network, timeouts, connection refused, a download that ran
-  out of attempts, a step that may land differently next time) are retried
+* **transient** (network, timeouts, connection refused, the lake or the
+  warehouse briefly unreachable, a download that ran out of attempts, a step
+  that may land differently next time) are retried
   with the shared exponential backoff of `task_defaults()`;
 * **permanent** (a verification or quality gate that found bad data, a
-  non-retryable HTTP status, a programming error such as `ValueError`) fail
+  non-retryable HTTP status, an S3 request MinIO refused such as AccessDenied,
+  a programming error such as `ValueError`) fail
   the task at once, through `AirflowFailException` which skips the remaining
   retries.
 
@@ -89,13 +91,47 @@ def _operational_errors() -> tuple[type[BaseException], ...]:
     return (psycopg.OperationalError,)
 
 
+def _lake_errors() -> tuple[type[BaseException], ...]:
+    """botocore's own connection errors: MinIO restarting, unreachable or timing out.
+
+    They do not derive from the builtin `ConnectionError`, so without this a lake
+    outage would only be retried because it is "unknown".
+    """
+    try:
+        from botocore import exceptions
+    except ImportError:  # pragma: no cover - boto3 is a runtime dependency
+        return ()
+    return (exceptions.ConnectionError, exceptions.HTTPClientError)
+
+
+# S3 error codes that clear up on their own (MinIO answers 503 SlowDown while
+# it heals or is under load); every other ClientError is a request MinIO
+# understood and refused - a missing bucket, a denied policy - and replays.
+_TRANSIENT_S3_CODES = frozenset(
+    {"SlowDown", "ServiceUnavailable", "RequestTimeout", "InternalError", "Throttling"}
+)
+
+
+def _client_error_is_transient(exc: BaseException) -> bool | None:
+    """True/False for a botocore `ClientError`, None for anything else."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict) or "Error" not in response:
+        return None
+    code = str(response.get("Error", {}).get("Code", ""))
+    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return code in _TRANSIENT_S3_CODES or (isinstance(status, int) and status >= 500)
+
+
 def is_transient(exc: BaseException) -> bool:
     """Would retrying the step that raised `exc` plausibly succeed?"""
     flag = getattr(exc, "retryable", None)
     if isinstance(flag, bool):  # TaskFailed, DownloadError: the raiser knows best
         return flag
-    if isinstance(exc, TRANSIENT_TYPES + _operational_errors()):
+    if isinstance(exc, TRANSIENT_TYPES + _operational_errors() + _lake_errors()):
         return True
+    s3 = _client_error_is_transient(exc)
+    if s3 is not None:
+        return s3
     if isinstance(exc, PERMANENT_TYPES):
         return False
     cause = exc.__cause__

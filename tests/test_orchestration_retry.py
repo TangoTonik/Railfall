@@ -8,6 +8,7 @@ from datetime import timedelta
 
 import psycopg
 import pytest
+from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
 
 from railfall.ingest.http import DownloadError, fetch
 from railfall.orchestration import retry
@@ -172,3 +173,49 @@ def test_connect_does_not_wait_on_bad_credentials() -> None:
 def test_connect_rejects_zero_attempts() -> None:
     with pytest.raises(ValueError):
         retry.connect("postgresql://x", attempts=0, connector=_Connector([]))
+
+
+def _s3_error(code: str, status: int) -> ClientError:
+    return ClientError(
+        {"Error": {"Code": code, "Message": code}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        "PutObject",
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        EndpointConnectionError(endpoint_url="http://minio:9000/railfall-lake"),
+        ReadTimeoutError(endpoint_url="http://minio:9000/railfall-lake"),
+        _s3_error("SlowDown", 503),
+        _s3_error("InternalError", 500),
+        _s3_error("XMinioServerNotInitialized", 503),
+    ],
+)
+def test_lake_outages_are_transient(exc: Exception) -> None:
+    """MinIO restarting or overloaded: the next try lands the same object."""
+    assert retry.is_transient(exc)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        _s3_error("AccessDenied", 403),
+        _s3_error("NoSuchBucket", 404),
+        _s3_error("InvalidAccessKeyId", 403),
+    ],
+)
+def test_refused_lake_requests_are_permanent(exc: Exception) -> None:
+    """A policy or a missing bucket does not change between retries."""
+    assert not retry.is_transient(exc)
+
+
+def test_fail_fast_does_not_retry_a_denied_lake_write() -> None:
+    @retry.fail_fast
+    def land() -> None:
+        raise _s3_error("AccessDenied", 403)
+
+    with pytest.raises(Exception) as info:
+        land()
+    assert type(info.value).__name__ in {"AirflowFailException", "PermanentFailure"}
+    assert "AccessDenied" in str(info.value)
