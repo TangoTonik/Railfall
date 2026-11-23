@@ -127,3 +127,32 @@ def test_bad_date_is_rejected_before_any_download(s3) -> None:
     with pytest.raises(ValueError):
         tasks.ingest_sncf("12/11/2026", fetcher=_fetch, **_deps(s3))
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        (None, ["75", "69", "13"]),
+        ([], ["75", "69", "13"]),
+        ("", ["75", "69", "13"]),
+        (["6", "2a", "06"], ["06", "2A"]),
+        ("13, 75,", ["13", "75"]),
+        ([971], ["971"]),
+    ],
+)
+def test_resolve_departments_param_or_configured(requested, expected) -> None:
+    assert tasks.resolve_departments(requested, default=("75", "69", "13")) == expected
+
+
+@pytest.mark.parametrize("requested", [["20"], ["75", "999"], "abc"])
+def test_resolve_departments_rejects_bad_codes_as_permanent(requested) -> None:
+    from railfall.orchestration.retry import is_transient
+
+    with pytest.raises(ValueError, match="not a French department code") as excinfo:
+        tasks.resolve_departments(requested, default=("75",))
+    assert not is_transient(excinfo.value)
+
+
+def test_resolve_departments_needs_at_least_one() -> None:
+    with pytest.raises(ValueError, match="no Météo-France department"):
+        tasks.resolve_departments(None, default=())

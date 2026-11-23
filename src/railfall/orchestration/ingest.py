@@ -19,7 +19,7 @@ from dataclasses import asdict
 from datetime import date
 
 from railfall.config import Settings
-from railfall.ingest import run, verify
+from railfall.ingest import meteo, run, verify
 from railfall.ingest.http import Download, fetch
 
 Summary = list[dict]
@@ -77,6 +77,25 @@ def ingest_sncf(
     )
     _raise_on_failures("ingest sncf", [f"{r.dataset}: {r.error}" for r in results if not r.ok])
     return [asdict(r) for r in results]
+
+
+def resolve_departments(
+    requested: str | Iterable[str | int] | None, *, default: Iterable[str | int]
+) -> list[str]:
+    """The departments a run ingests: the `departments` run param, else the configured ones.
+
+    Accepts a list or a comma-separated string (the Airflow trigger form sends
+    either). Codes are normalised and de-duplicated in order; an invalid code
+    raises `ValueError`, which the DAG's `fail_fast` turns into an immediate
+    failure: retrying a typo three times only delays the red run.
+    """
+    if isinstance(requested, str):
+        requested = [part for part in requested.split(",") if part.strip()]
+    chosen = list(requested) if requested else list(default)
+    departments = list(dict.fromkeys(meteo.normalize_department(d) for d in chosen))
+    if not departments:
+        raise ValueError("no Météo-France department to ingest")
+    return departments
 
 
 def ingest_meteo(

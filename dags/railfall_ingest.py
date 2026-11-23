@@ -1,12 +1,15 @@
 """Daily ingestion of the open data into bronze: SNCF + Météo-France, then verified.
 
     ingest_sncf ──> verify_sncf
-    ingest_meteo[dept] (one mapped task per METEO_DEPARTMENTS entry) ──> verify_meteo
+    meteo_departments ──> ingest_meteo[dept] (one mapped task per department) ──> verify_meteo
 
 Tasks are thin wrappers around `railfall.orchestration.ingest`; all logic and
 its tests live in the package. The `ingest_date` partition defaults to the end
 of the run's data interval (the day the run downloads), and can be forced with
-the `ingest_date` param when triggering by hand or from e2e.
+the `ingest_date` param when triggering by hand or from e2e. The departments
+default to METEO_DEPARTMENTS; the `departments` param narrows a run to others
+(a backfill of one department, say). An invalid code fails `meteo_departments`
+at once, without retries, and nothing is downloaded for Météo-France.
 
 Re-running a day is safe: bronze landing skips content it already holds.
 """
@@ -44,12 +47,24 @@ default_args = retry.task_defaults()
             format="date",
             description="bronze ingest_date partition (YYYY-MM-DD); default: interval end",
         ),
+        "departments": Param(
+            None,
+            type=["null", "array"],
+            items={"type": "string"},
+            description="INSEE department codes to ingest; default: METEO_DEPARTMENTS",
+        ),
     },
     tags=["railfall", "bronze", "ingest"],
     doc_md=__doc__,
 )
 def railfall_ingest():
-    departments = list(Settings.from_env().meteo_departments)
+    configured = list(Settings.from_env().meteo_departments)
+
+    @task
+    @fail_fast
+    def meteo_departments() -> list[str]:
+        requested = get_current_context()["params"].get("departments")
+        return ingest.resolve_departments(requested, default=configured)
 
     @task
     @fail_fast
@@ -70,13 +85,14 @@ def railfall_ingest():
 
     @task
     @fail_fast
-    def verify_meteo(ingest_date: str) -> list[dict]:
+    def verify_meteo(ingest_date: str, departments: list[str]) -> list[dict]:
         return ingest.verify_meteo(ingest_date, departments=departments)
 
     ingest_sncf(INGEST_DATE) >> verify_sncf(INGEST_DATE)
+    departments = meteo_departments()
     (
         ingest_meteo.partial(ingest_date=INGEST_DATE).expand(department=departments)
-        >> verify_meteo(INGEST_DATE)
+        >> verify_meteo(INGEST_DATE, departments)
     )
 
 

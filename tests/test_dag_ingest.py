@@ -29,7 +29,13 @@ def test_dag_tasks_only_call_existing_orchestration_functions() -> None:
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "ingest"
     }
-    assert called == {"ingest_sncf", "verify_sncf", "ingest_meteo", "verify_meteo"}
+    assert called == {
+        "ingest_sncf",
+        "verify_sncf",
+        "resolve_departments",
+        "ingest_meteo",
+        "verify_meteo",
+    }
     for name in called:
         assert callable(getattr(ingest, name))
 
@@ -54,20 +60,23 @@ def test_dag_shape(dag) -> None:
     assert downstream == {
         "ingest_sncf": ["verify_sncf"],
         "verify_sncf": [],
+        "meteo_departments": ["ingest_meteo", "verify_meteo"],
         "ingest_meteo": ["verify_meteo"],
         "verify_meteo": [],
     }
 
 
-def test_meteo_is_mapped_over_configured_departments(dag) -> None:
+def test_meteo_is_mapped_over_the_resolved_departments(dag) -> None:
+    """Mapped at run time over `meteo_departments`, so the run param can narrow it."""
     task = dag.get_task("ingest_meteo")
-    assert task.op_kwargs_expand_input.value["department"] == ["75", "69", "13"]
+    source = task.op_kwargs_expand_input.value["department"]
+    assert source.operator.task_id == "meteo_departments"
 
 
 def test_schedule_and_safety_settings(dag) -> None:
     assert dag.catchup is False
     assert dag.max_active_runs == 1
-    assert dag.params.dump() == {"ingest_date": None}
+    assert dag.params.dump() == {"ingest_date": None, "departments": None}
     for task in dag.tasks:
         assert task.retries == 3
         assert task.retry_exponential_backoff is True
