@@ -7,6 +7,9 @@ name: railfall
 x-minio-image: &minio-image
   build:
     context: ./infra/minio
+    # No provenance attestation: it is stamped with the build time, so every
+    # rebuild would get a new image digest and `make up` would recreate MinIO.
+    provenance: false
     args:
       MINIO_RELEASE: RELEASE.2024-10-13T13-34-11Z
       MC_RELEASE: RELEASE.2024-10-08T09-37-26Z
@@ -19,6 +22,7 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: infra/airflow/Dockerfile
+    provenance: false  # stable digest across rebuilds (see x-minio-image)
     args:
       AIRFLOW_VERSION: 2.10.5
       PYTHON_VERSION: "3.11"

@@ -219,3 +219,13 @@ def test_metabase_db_password_matches_terraform():
     env = _env_example()
     assert env["METABASE_DB_PASSWORD"] == env["TF_VAR_metabase_db_password"]
     assert env["METABASE_DB_NAME"] != env["POSTGRES_DB"]
+
+
+def test_built_images_have_stable_digests(compose):
+    """`make up` rebuilds before starting; a provenance attestation is stamped with
+    the build time, so the digest would change and compose would recreate the
+    containers on every run (e2e: second `make up` must not touch anything)."""
+    built = {name: svc for name, svc in compose["services"].items() if "build" in svc}
+    assert built, "expected locally built images (MinIO, Airflow)"
+    for name, svc in built.items():
+        assert svc["build"].get("provenance") is False, f"{name} build keeps provenance"

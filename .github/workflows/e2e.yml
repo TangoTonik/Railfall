@@ -780,7 +780,13 @@ jobs:
           before=$(docker compose --profile airflow --profile bi ps -q | sort)
           make up WAIT=60
           after=$(docker compose --profile airflow --profile bi ps -q | sort)
-          test "$before" = "$after"
+          # Same container IDs: the second run recreated nothing.
+          if [ "$before" != "$after" ]; then
+            diff <(echo "$before") <(echo "$after") || true
+            docker compose --profile airflow --profile bi ps -a
+            echo "::error::second make up recreated containers"
+            exit 1
+          fi
           make infra-check
           python -m railfall.healthcheck --all
           curl -fsS "http://localhost:8080/health" | jq -e \
