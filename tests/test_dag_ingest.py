@@ -69,4 +69,5 @@ def test_schedule_and_safety_settings(dag) -> None:
     assert dag.max_active_runs == 1
     assert dag.params.dump() == {"ingest_date": None}
     for task in dag.tasks:
-        assert task.retries == 2
+        assert task.retries == 3
+        assert task.retry_exponential_backoff is True

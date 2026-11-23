@@ -93,10 +93,38 @@ def test_schedule_and_safety_settings(dag) -> None:
     assert dag.max_active_runs == 1
     assert dag.params.dump() == {"ingest_date": None}
     for task in dag.tasks:
-        assert task.retries == 2
+        assert task.retries == 3
+        assert task.retry_exponential_backoff is True
 
 
 def test_quality_gate_runs_last_with_the_default_timeout(dag) -> None:
     gate = dag.get_task("check_raw_quality")
     assert gate.upstream_task_ids == {"verify_warehouse"}
     assert gate.execution_timeout == timedelta(minutes=30)
+
+
+@pytest.mark.parametrize("dag_file", sorted(DAG_FILE.parent.glob("railfall_*.py")))
+def test_every_task_fails_fast_and_uses_the_shared_retry_policy(dag_file: Path) -> None:
+    """A task without `fail_fast` would retry a contract violation three times."""
+    tree = ast.parse(dag_file.read_text())
+    tasks = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            (isinstance(d, ast.Name) and d.id == "task")
+            or (isinstance(d, ast.Call) and getattr(d.func, "id", None) == "task")
+            for d in node.decorator_list
+        )
+    ]
+    assert tasks, f"no @task found in {dag_file.name}"
+    for fn in tasks:
+        names = [getattr(d, "id", None) for d in fn.decorator_list]
+        assert "fail_fast" in names, f"{dag_file.name}:{fn.name} is not wrapped in fail_fast"
+        # @task must stay outermost: it has to see the wrapped callable.
+        assert names.index("fail_fast") > 0
+    assert "task_defaults" in {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }

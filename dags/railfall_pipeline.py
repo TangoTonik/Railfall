@@ -35,17 +35,14 @@ from airflow.models.param import Param
 from airflow.operators.python import get_current_context
 
 from railfall.config import Settings
-from railfall.orchestration import ingest, pipeline
+from railfall.orchestration import ingest, pipeline, retry
+from railfall.orchestration.retry import fail_fast
 
 INGEST_DATE = "{{ params.ingest_date or (data_interval_end | ds) }}"
 
-default_args = {
-    "owner": "railfall",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
-    "retry_exponential_backoff": True,
-    "execution_timeout": timedelta(minutes=30),
-}
+# Transient failures retry with exponential backoff (2, 4, 8 min); tasks are
+# wrapped in `fail_fast`, so a contract violation fails at once instead.
+default_args = retry.task_defaults()
 
 # Spark steps rebuild every silver table from the whole bronze history; on a
 # cold worker the first one also resolves the hadoop-aws jars.
@@ -75,43 +72,53 @@ def railfall_pipeline():
     departments = list(Settings.from_env().meteo_departments)
 
     @task
+    @fail_fast
     def ingest_sncf(ingest_date: str) -> list[dict]:
         return ingest.ingest_sncf(ingest_date)
 
     @task
+    @fail_fast
     def verify_sncf(ingest_date: str) -> list[dict]:
         return ingest.verify_sncf(ingest_date)
 
     @task(map_index_template="{{ department }}")
+    @fail_fast
     def ingest_meteo(ingest_date: str, department: str) -> list[dict]:
         get_current_context()["department"] = department
         return ingest.ingest_meteo(ingest_date, department)
 
     @task
+    @fail_fast
     def verify_meteo(ingest_date: str) -> list[dict]:
         return ingest.verify_meteo(ingest_date, departments=departments)
 
     @task(execution_timeout=SPARK_TIMEOUT)
+    @fail_fast
     def build_silver(ingest_date: str) -> list[dict]:
         return pipeline.build_silver(ingest_date)
 
     @task(execution_timeout=SPARK_TIMEOUT)
+    @fail_fast
     def verify_silver() -> list[dict]:
         return pipeline.verify_silver()
 
     @task(execution_timeout=SPARK_TIMEOUT)
+    @fail_fast
     def load_warehouse() -> list[dict]:
         return pipeline.load_warehouse()
 
     @task(execution_timeout=SPARK_TIMEOUT)
+    @fail_fast
     def verify_warehouse() -> list[dict]:
         return pipeline.verify_warehouse()
 
     @task
+    @fail_fast
     def check_raw_quality() -> list[dict]:
         return pipeline.check_quality()
 
     @task
+    @fail_fast
     def monitor_warehouse() -> dict:
         return pipeline.monitor()
 

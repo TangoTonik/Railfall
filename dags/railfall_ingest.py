@@ -13,25 +13,20 @@ Re-running a day is safe: bronze landing skips content it already holds.
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pendulum
 from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.operators.python import get_current_context
 
 from railfall.config import Settings
-from railfall.orchestration import ingest
+from railfall.orchestration import ingest, retry
+from railfall.orchestration.retry import fail_fast
 
 INGEST_DATE = "{{ params.ingest_date or (data_interval_end | ds) }}"
 
-default_args = {
-    "owner": "railfall",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
-    "retry_exponential_backoff": True,
-    "execution_timeout": timedelta(minutes=30),
-}
+# Transient failures retry with exponential backoff (2, 4, 8 min); tasks are
+# wrapped in `fail_fast`, so a contract violation fails at once instead.
+default_args = retry.task_defaults()
 
 
 @dag(
@@ -57,20 +52,24 @@ def railfall_ingest():
     departments = list(Settings.from_env().meteo_departments)
 
     @task
+    @fail_fast
     def ingest_sncf(ingest_date: str) -> list[dict]:
         return ingest.ingest_sncf(ingest_date)
 
     @task
+    @fail_fast
     def verify_sncf(ingest_date: str) -> list[dict]:
         return ingest.verify_sncf(ingest_date)
 
     @task(map_index_template="{{ department }}")
+    @fail_fast
     def ingest_meteo(ingest_date: str, department: str) -> list[dict]:
         # Label the mapped instance with its department in the UI.
         get_current_context()["department"] = department
         return ingest.ingest_meteo(ingest_date, department)
 
     @task
+    @fail_fast
     def verify_meteo(ingest_date: str) -> list[dict]:
         return ingest.verify_meteo(ingest_date, departments=departments)
 
