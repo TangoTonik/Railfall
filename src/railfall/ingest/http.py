@@ -22,7 +22,16 @@ USER_AGENT = f"railfall/{__version__} (+https://github.com/TangoTonik/Railfall)"
 
 
 class DownloadError(RuntimeError):
-    """A download failed for good (non-retryable status, or retries exhausted)."""
+    """A download failed for good (non-retryable status, or retries exhausted).
+
+    `retryable` is False for a status that will not change on its own (404,
+    400, ...) and True when the server was only flaky for longer than our
+    attempts, so a later task retry may still succeed.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -84,7 +93,9 @@ def fetch(
             last_error = f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}"
         if attempt < max_retries:
             sleep(retry_after if retry_after is not None else backoff_s * 2**attempt)
-    raise DownloadError(f"GET {url} failed after {max_retries + 1} attempts: {last_error}")
+    raise DownloadError(
+        f"GET {url} failed after {max_retries + 1} attempts: {last_error}", retryable=True
+    )
 
 
 def _retry_after(value: str | None, cap_s: float = 60.0) -> float | None:

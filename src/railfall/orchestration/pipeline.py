@@ -123,6 +123,7 @@ def verify_silver(
             for r in reports
             if not r.ok
         ],
+        retryable=False,
     )
     return [asdict(r) for r in reports]
 
@@ -137,9 +138,9 @@ def _warehouse(settings: Settings, conn) -> Iterator:
     if conn is not None:
         yield conn
         return
-    import psycopg
+    from railfall.orchestration.retry import connect
 
-    with psycopg.connect(settings.warehouse_dsn, autocommit=True) as own:
+    with connect(settings.warehouse_dsn, autocommit=True) as own:
         yield own
 
 
@@ -198,7 +199,9 @@ def verify_warehouse(
             session, warehouse, root=_root(settings, root), names=tables, schema=schema
         )
     _raise_on_failures(
-        "verify warehouse", [f"{r.table}: {'; '.join(r.errors)}" for r in reports if not r.ok]
+        "verify warehouse",
+        [f"{r.table}: {'; '.join(r.errors)}" for r in reports if not r.ok],
+        retryable=False,
     )
     return [asdict(r) for r in reports]
 
@@ -230,6 +233,7 @@ def check_quality(
             for r in reports
             if not r.ok
         ],
+        retryable=False,
     )
     return [asdict(r) for r in reports]
 
@@ -262,11 +266,10 @@ def monitor(
 
     settings = settings or Settings.from_env()
     if conn is None:
-        import psycopg
-
+        from railfall.orchestration.retry import connect
         from railfall.transform.verify import transformer_dsn
 
-        with psycopg.connect(transformer_dsn(), connect_timeout=10, autocommit=True) as own:
+        with connect(transformer_dsn(), autocommit=True) as own:
             return monitor(settings=settings, conn=own, now=now, use_llm=use_llm, schema=schema)
 
     fresh = [
@@ -277,7 +280,11 @@ def monitor(
     run_report = runs.report(recent, volumes)
     result = summary.summarize(summary.collect(fresh, run_report), settings, use_llm=use_llm)
     logging.getLogger(__name__).info("monitoring summary (%s):\n%s", result.source, result.text)
+    # Re-reading the audit log cannot repair a failed load: only re-running
+    # the pipeline can, so the monitor fails without retrying.
     _raise_on_failures(
-        "monitor", [a.line() for a in result.anomalies if a.kind in BLOCKING_ANOMALIES]
+        "monitor",
+        [a.line() for a in result.anomalies if a.kind in BLOCKING_ANOMALIES],
+        retryable=False,
     )
     return {"summary": result.as_dict(), "freshness": fresh, "runs": run_report}

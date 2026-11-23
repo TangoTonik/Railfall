@@ -26,7 +26,16 @@ Summary = list[dict]
 
 
 class TaskFailed(RuntimeError):
-    """Some datasets failed; the message lists them, the others were still processed."""
+    """Some datasets failed; the message lists them, the others were still processed.
+
+    `retryable` tells `railfall.orchestration.retry` whether Airflow should try
+    again: a download or a build can land differently next time, a
+    verification that found bad data cannot.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _date(value: str | date) -> date:
@@ -40,9 +49,12 @@ def _fetcher(settings: Settings) -> Callable[[str], Download]:
     return _fetch
 
 
-def _raise_on_failures(step: str, failures: Sequence[str]) -> None:
+def _raise_on_failures(step: str, failures: Sequence[str], *, retryable: bool = True) -> None:
     if failures:
-        raise TaskFailed(f"{step}: {len(failures)} dataset(s) failed: " + "; ".join(failures))
+        raise TaskFailed(
+            f"{step}: {len(failures)} dataset(s) failed: " + "; ".join(failures),
+            retryable=retryable,
+        )
 
 
 def ingest_sncf(
@@ -95,7 +107,11 @@ def ingest_meteo(
 
 
 def _checks(step: str, checks: list[verify.Check]) -> Summary:
-    _raise_on_failures(step, [f"{c.dataset}: {'; '.join(c.problems)}" for c in checks if not c.ok])
+    _raise_on_failures(
+        step,
+        [f"{c.dataset}: {'; '.join(c.problems)}" for c in checks if not c.ok],
+        retryable=False,
+    )
     return [asdict(c) for c in checks]
 
 
