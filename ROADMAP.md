@@ -46,4 +46,4 @@ of their endpoints.
 - [x] Day 17 — Statistical analysis on the real marts: does bad weather significantly lower punctuality?
 - [x] Day 18 — Monitoring (run metrics, freshness checks) + optional LLM anomaly summaries (off by default)
 - [x] Day 19 — Hardening: retries, failure scenarios tested in e2e, `make up` one-command start
-- [ ] Day 20 — Final write-up with real results and charts, architecture diagram, v1.0.0 release
+- [x] Day 20 — Final write-up with real results and charts, architecture diagram, v1.0.0 release
