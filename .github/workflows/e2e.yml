@@ -740,6 +740,25 @@ jobs:
           sha256sum -c first.sha
           cp weather-stats.json weather-stats.md weather-report.json weather-report.md results/
 
+      - name: Results page writes itself from the real results
+        # docs/RESULTS.md is generated, never typed: the live run's numbers go
+        # into the page, every factor gets a finding, every drawn chart is
+        # linked, and --check proves the page matches the JSON it came from.
+        run: |
+          make --no-print-directory results \
+            RESULTS_ARGS="--charts results/charts.json --out results/RESULTS.md --summary results-summary.json"
+          jq -e '.factors == ["rain", "wind", "frost"]
+            and (.charts == ["effects", "seasons", "dose", "intensity"])' results-summary.json
+          for f in effects seasons dose intensity; do
+            grep -qF "](./$f.svg)" results/RESULTS.md || { echo "no link to $f.svg"; exit 1; }
+          done
+          # One finding per factor, each with a real number.
+          test "$(grep -c '^- \*\*' results/RESULTS.md)" -eq 3
+          if grep -q 'n/a pts on-time' results/RESULTS.md; then exit 1; fi
+          make --no-print-directory results \
+            RESULTS_ARGS="--charts results/charts.json --out results/RESULTS.md --check"
+          cat results/RESULTS.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload the weather results and charts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

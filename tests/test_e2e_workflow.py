@@ -481,3 +481,16 @@ def test_charts_render_from_the_live_results(steps):
     assert "sha256sum -c" in steps[charts]["run"], "a re-render must be byte-identical"
     upload = next(s for s in steps if s.get("with", {}).get("name") == "weather-results")
     assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_results_page_is_generated_from_the_live_results(steps):
+    page = _index(steps, "make --no-print-directory results")
+    # After the charts (it links them), before the artifact upload (it ships in it).
+    assert page > _index(steps, "make --no-print-directory charts")
+    upload = next(
+        i for i, s in enumerate(steps) if s.get("with", {}).get("name") == "weather-results"
+    )
+    assert page < upload
+    run = steps[page]["run"]
+    assert "--charts results/charts.json" in run and "--out results/RESULTS.md" in run
+    assert "--check" in run, "the page must match the JSON it was written from"
