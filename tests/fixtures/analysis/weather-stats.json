@@ -1,0 +1,46 @@
+{
+  "route_months": 1840,
+  "routes": 46,
+  "months": 40,
+  "alpha": 0.05,
+  "confidence": 0.95,
+  "seed": 17,
+  "tests": [
+    {"factor": "rain", "gap": -0.0121, "naive_gap": -0.0187, "ci_low": -0.0189, "ci_high": -0.0058,
+     "p_value": 0.0004, "p_adjusted": 0.0012, "strata_used": 212, "adverse_route_months": 611,
+     "permutations": 2000, "bootstrap": 1000, "significant": true, "verdict": "lowers punctuality"},
+    {"factor": "wind", "gap": -0.0034, "naive_gap": -0.0071, "ci_low": -0.0102, "ci_high": 0.0031,
+     "p_value": 0.31, "p_adjusted": 0.31, "strata_used": 188, "adverse_route_months": 402,
+     "permutations": 2000, "bootstrap": 1000, "significant": false, "verdict": "no significant effect"},
+    {"factor": "frost", "gap": -0.0215, "naive_gap": -0.0302, "ci_low": -0.0344, "ci_high": -0.0091,
+     "p_value": 0.002, "p_adjusted": 0.003, "strata_used": 61, "adverse_route_months": 233,
+     "permutations": 2000, "bootstrap": 1000, "significant": true, "verdict": "lowers punctuality"}
+  ],
+  "by_season": [
+    {"season": "winter", "factor": "rain", "route_months": 460, "strata_available": 46, "tested": true,
+     "gap": -0.015, "ci_low": -0.027, "ci_high": -0.004, "p_value": 0.004, "p_adjusted": 0.02, "verdict": "lowers punctuality"},
+    {"season": "winter", "factor": "wind", "route_months": 460, "strata_available": 40, "tested": true,
+     "gap": -0.004, "ci_low": -0.014, "ci_high": 0.006, "p_value": 0.4, "p_adjusted": 0.6, "verdict": "no significant effect"},
+    {"season": "winter", "factor": "frost", "route_months": 460, "strata_available": 38, "tested": true,
+     "gap": -0.022, "ci_low": -0.036, "ci_high": -0.009, "p_value": 0.001, "p_adjusted": 0.012, "verdict": "lowers punctuality"},
+    {"season": "summer", "factor": "rain", "route_months": 460, "strata_available": 44, "tested": true,
+     "gap": -0.009, "ci_low": -0.021, "ci_high": 0.003, "p_value": 0.09, "p_adjusted": 0.27, "verdict": "no significant effect"},
+    {"season": "summer", "factor": "wind", "route_months": 460, "strata_available": 30, "tested": true,
+     "gap": 0.002, "ci_low": -0.008, "ci_high": 0.012, "p_value": 0.7, "p_adjusted": 0.8, "verdict": "no significant effect"},
+    {"season": "summer", "factor": "frost", "route_months": 460, "strata_available": 0, "tested": false,
+     "verdict": "not testable"}
+  ],
+  "dose": [
+    {"factor": "rain", "unit": "10 mm", "slope": -0.0021, "ci_low": -0.0035, "ci_high": -0.0008,
+     "p_value": 0.002, "p_adjusted": 0.006, "route_months": 1840, "strata_used": 212,
+     "verdict": "lowers punctuality", "consistency": "supported"},
+    {"factor": "wind", "unit": "m/s", "slope": -0.0009, "ci_low": -0.0031, "ci_high": 0.0012,
+     "p_value": 0.4, "p_adjusted": 0.4, "route_months": 1840, "strata_used": 188,
+     "verdict": "no significant effect", "consistency": "supported"},
+    {"factor": "frost", "unit": "frost day", "slope": null, "ci_low": null, "ci_high": null,
+     "p_value": null, "p_adjusted": null, "route_months": 0, "strata_used": 0,
+     "verdict": "not testable", "consistency": "unsupported"}
+  ],
+  "errors": [],
+  "ok": true
+}

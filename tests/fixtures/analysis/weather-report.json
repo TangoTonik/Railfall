@@ -1,0 +1,99 @@
+{
+  "binary": [],
+  "intensity": [
+    {
+      "weather_factor": "rain",
+      "intensity_band": "dry",
+      "band_order": 0,
+      "is_baseline": true,
+      "route_months": 900,
+      "arrival_punctuality_rate": 0.86,
+      "avg_delay_arrival_min": 30,
+      "punctuality_gap_pts": null
+    },
+    {
+      "weather_factor": "rain",
+      "intensity_band": "wet",
+      "band_order": 1,
+      "is_baseline": false,
+      "route_months": 600,
+      "arrival_punctuality_rate": 0.85,
+      "avg_delay_arrival_min": 35,
+      "punctuality_gap_pts": -1.0
+    },
+    {
+      "weather_factor": "rain",
+      "intensity_band": "very wet",
+      "band_order": 2,
+      "is_baseline": false,
+      "route_months": 340,
+      "arrival_punctuality_rate": 0.83,
+      "avg_delay_arrival_min": 40,
+      "punctuality_gap_pts": -3.0
+    },
+    {
+      "weather_factor": "wind",
+      "intensity_band": "calm",
+      "band_order": 0,
+      "is_baseline": true,
+      "route_months": 900,
+      "arrival_punctuality_rate": 0.855,
+      "avg_delay_arrival_min": 30,
+      "punctuality_gap_pts": null
+    },
+    {
+      "weather_factor": "wind",
+      "intensity_band": "windy",
+      "band_order": 1,
+      "is_baseline": false,
+      "route_months": 600,
+      "arrival_punctuality_rate": 0.852,
+      "avg_delay_arrival_min": 35,
+      "punctuality_gap_pts": -0.3
+    },
+    {
+      "weather_factor": "wind",
+      "intensity_band": "stormy",
+      "band_order": 2,
+      "is_baseline": false,
+      "route_months": 340,
+      "arrival_punctuality_rate": 0.846,
+      "avg_delay_arrival_min": 40,
+      "punctuality_gap_pts": -0.9
+    },
+    {
+      "weather_factor": "frost",
+      "intensity_band": "no frost",
+      "band_order": 0,
+      "is_baseline": true,
+      "route_months": 900,
+      "arrival_punctuality_rate": 0.857,
+      "avg_delay_arrival_min": 30,
+      "punctuality_gap_pts": null
+    },
+    {
+      "weather_factor": "frost",
+      "intensity_band": "some frost",
+      "band_order": 1,
+      "is_baseline": false,
+      "route_months": 600,
+      "arrival_punctuality_rate": 0.84,
+      "avg_delay_arrival_min": 35,
+      "punctuality_gap_pts": -1.7
+    },
+    {
+      "weather_factor": "frost",
+      "intensity_band": "hard frost",
+      "band_order": 2,
+      "is_baseline": false,
+      "route_months": 340,
+      "arrival_punctuality_rate": 0.82,
+      "avg_delay_arrival_min": 40,
+      "punctuality_gap_pts": -3.7
+    }
+  ],
+  "regional": [],
+  "min_route_months": 30,
+  "errors": [],
+  "ok": true
+}
