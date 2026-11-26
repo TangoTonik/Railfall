@@ -4,15 +4,69 @@
 
 > 🚧 Work in progress — day 16 of 20 done, see [ROADMAP.md](ROADMAP.md).
 
-## Architecture (target)
+## Architecture
 
+```mermaid
+flowchart LR
+  %% ---- sources -------------------------------------------------------
+  subgraph sources["Open data (HTTPS)"]
+    sncf[["SNCF open data<br/>punctuality + stations"]]
+    meteo[["Météo-France<br/>daily climatology per department"]]
+  end
+
+  %% ---- Airflow: railfall_pipeline DAG --------------------------------
+  subgraph airflow["Airflow (airflow-webserver, airflow-scheduler, airflow-init)"]
+    direction LR
+    ingest_sncf --> verify_sncf
+    ingest_meteo["ingest_meteo[dept]"] --> verify_meteo
+    verify_sncf --> build_silver
+    verify_meteo --> build_silver
+    build_silver --> verify_silver --> load_warehouse --> verify_warehouse
+    verify_warehouse --> check_raw_quality --> monitor_warehouse
+  end
+
+  %% ---- lake ----------------------------------------------------------
+  subgraph minio["MinIO lake (minio) · bucket provisioned by Terraform"]
+    bronze[("bronze/<br/>raw JSON + CSV,<br/>partitioned by ingest_date")]
+    silver[("silver/<br/>typed Parquet")]
+  end
+
+  %% ---- warehouse -----------------------------------------------------
+  subgraph postgres["Postgres warehouse (postgres)"]
+    raw[("raw<br/>merged on natural keys,<br/>_load_runs audit log")]
+    staging[("staging<br/>dbt views")]
+    marts[("marts<br/>star schema +<br/>weather-impact marts")]
+  end
+
+  %% ---- consumers -----------------------------------------------------
+  metabase["Metabase (metabase)<br/>dashboards as code"]
+  analysis["railfall.analysis<br/>weather-stats, charts"]
+  gx{{"Great Expectations<br/>checkpoint on raw"}}
+  dbt{{"dbt build<br/>models + tests"}}
+
+  sncf --> ingest_sncf
+  meteo --> ingest_meteo
+  ingest_sncf -. writes .-> bronze
+  ingest_meteo -. writes .-> bronze
+  build_silver -. "PySpark over S3A" .-> silver
+  bronze -. reads .-> build_silver
+  load_warehouse -. "upsert ON CONFLICT" .-> raw
+  silver -. reads .-> load_warehouse
+  check_raw_quality -. runs .-> gx
+  gx -. validates .-> raw
+  raw --> dbt --> staging --> marts
+  marts --> metabase
+  marts --> analysis
+  monitor_warehouse -. "freshness + run metrics" .-> raw
+
+  classDef store fill:#eef4ff,stroke:#3b6bc9
+  classDef task fill:#fff7e6,stroke:#c98a1b
+  class bronze,silver,raw,staging,marts store
+  class ingest_sncf,verify_sncf,ingest_meteo,verify_meteo,build_silver,verify_silver,load_warehouse,verify_warehouse,check_raw_quality,monitor_warehouse task
 ```
- SNCF open data ─┐                                   ┌─► dbt (staging → star schema → marts)
-                 ├─► Python ingestion ─► MinIO lake ─┤                 │
- Météo-France  ──┘     (bronze)        Spark (silver)└─► Postgres ─────┴─► Metabase dashboards
-                                                          warehouse
-            └──────────── orchestrated by Airflow · quality gates: dbt tests + Great Expectations ───┘
-```
+
+The full picture, with what each stage writes and how it stays idempotent, is in
+[docs/architecture.md](docs/architecture.md).
 
 | Layer | Tool | Why |
 |---|---|---|
