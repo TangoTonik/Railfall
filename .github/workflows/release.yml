@@ -2,13 +2,17 @@ name: release
 
 # Publishes a GitHub release when a vX.Y.Z tag is pushed. The tag must match
 # railfall.__version__ and CHANGELOG.md must hold a dated section for it; the
-# notes are that section, the assets are the wheel and sdist built from the tag.
+# notes are that section, the assets are the wheel and sdist built from the tag,
+# plus the results page and charts written by the e2e run of the tagged commit:
+# a release only ships numbers the real pipeline produced, and only once that
+# run is green.
 on:
   push:
     tags: ["v*.*.*"]
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -30,11 +34,34 @@ jobs:
       - name: Wheel carries the tagged version
         run: test -f "dist/railfall-${GITHUB_REF_NAME#v}-py3-none-any.whl"
       - run: python -m railfall.release notes "$GITHUB_REF_NAME" > release-notes.md
+      - name: Wait for the tagged commit's e2e run and take its results
+        # e2e runs on the push to main that the tag points at; it can still be
+        # running when the tag lands, so wait for it. A red or missing run stops
+        # the release: there is nothing honest to attach.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        timeout-minutes: 90
+        run: |
+          for _ in $(seq 1 30); do
+            run_id=$(gh run list --workflow e2e.yml --commit "$GITHUB_SHA" --event push \
+              --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "$run_id" ] && break
+            sleep 20
+          done
+          test -n "$run_id" || { echo "no e2e run for $GITHUB_SHA"; exit 1; }
+          gh run watch "$run_id" --exit-status --interval 60 > /dev/null
+          gh run download "$run_id" --name weather-results --dir results
+          test -s results/RESULTS.md
+          for f in effects seasons dose intensity; do test -s "results/$f.svg"; done
+          (cd results && zip -q "../railfall-${GITHUB_REF_NAME}-results.zip" ./*)
+          cp results/RESULTS.md "RESULTS-${GITHUB_REF_NAME}.md"
+          cat results/RESULTS.md >> "$GITHUB_STEP_SUMMARY"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
+            "railfall-${GITHUB_REF_NAME}-results.zip" "RESULTS-${GITHUB_REF_NAME}.md" \
             --verify-tag \
             --title "Railfall $GITHUB_REF_NAME" \
             --notes-file release-notes.md

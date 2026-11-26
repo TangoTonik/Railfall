@@ -31,8 +31,26 @@ def test_triggers_only_on_semver_tags(doc):
     assert trigger["push"] == {"tags": ["v*.*.*"]}
 
 
-def test_token_can_only_write_contents(doc):
-    assert doc["permissions"] == {"contents": "write"}
+def test_token_can_only_write_contents_and_read_runs(doc):
+    assert doc["permissions"] == {"contents": "write", "actions": "read"}
+
+
+def test_results_come_from_the_tagged_commits_green_e2e_run(doc):
+    fetch = _runs(doc)[_index(doc, "gh run download")]
+    assert '--commit "$GITHUB_SHA"' in fetch
+    assert "--workflow e2e.yml" in fetch
+    # --exit-status turns a red e2e run into a failed release.
+    assert "--exit-status" in fetch
+    assert fetch.index("gh run watch") < fetch.index("gh run download")
+    assert "--name weather-results" in fetch
+
+
+def test_results_are_attached_after_the_check(doc):
+    assert _index(doc, "railfall.release check") < _index(doc, "gh run download")
+    assert _index(doc, "gh run download") < _index(doc, "gh release create")
+    publish = _runs(doc)[_index(doc, "gh release create")]
+    assert "results.zip" in publish
+    assert "RESULTS-${GITHUB_REF_NAME}.md" in publish
 
 
 def test_check_runs_before_build_and_publish(doc):
