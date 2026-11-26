@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "railfall"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Data platform joining SNCF punctuality and Météo-France weather open data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,9 @@ spark = ["pyspark>=4.0,<4.1"]
 dbt = ["dbt-core>=1.12,<1.13", "dbt-postgres>=1.10,<1.11"]
 quality = ["great_expectations[postgresql]>=1.5,<2"]
 analysis = ["numpy>=1.26", "matplotlib>=3.8"]
+
+[tool.setuptools.dynamic]
+version = {attr = "railfall.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
