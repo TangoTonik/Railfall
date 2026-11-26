@@ -52,6 +52,7 @@ def test_help_lists_documented_targets():
         "weather-report",
         "weather-stats",
         "results",
+        "release-check",
         "freshness",
         "run-metrics",
         "monitor",
@@ -221,6 +222,11 @@ def test_results_writes_the_page_from_the_results_json():
         "python -m railfall.analysis.writeup --stats weather-stats.json "
         "--report weather-report.json --check"
     )
+
+
+def test_release_check_passes_the_tag():
+    out = _make("-n", "release-check", "PYTHON=python", "TAG=v1.0.0")
+    assert out.strip() == "python -m railfall.release check v1.0.0"
 
 
 @pytest.mark.parametrize(

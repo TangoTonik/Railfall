@@ -1,0 +1,40 @@
+name: release
+
+# Publishes a GitHub release when a vX.Y.Z tag is pushed. The tag must match
+# railfall.__version__ and CHANGELOG.md must hold a dated section for it; the
+# notes are that section, the assets are the wheel and sdist built from the tag.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: pip install -e .
+      - name: Tag matches the package version and the changelog
+        run: python -m railfall.release check "$GITHUB_REF_NAME"
+      - run: python -m build
+      - name: Wheel carries the tagged version
+        run: test -f "dist/railfall-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+      - run: python -m railfall.release notes "$GITHUB_REF_NAME" > release-notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "Railfall $GITHUB_REF_NAME" \
+            --notes-file release-notes.md
