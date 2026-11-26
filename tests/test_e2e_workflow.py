@@ -471,3 +471,13 @@ def test_failure_scenario_kills_a_real_loader_backend(steps):
     assert '["punctuality_monthly"]' in run and "raw._load_runs" in run and '"6/1"' in run
     assert run.index("verify-load-4.json") < run.index("load-5.json")
     assert ".duplicate_keys == 0" in run
+
+
+def test_charts_render_from_the_live_results(steps):
+    charts = _index(steps, "make --no-print-directory charts")
+    # Drawn from the JSON the real analysis steps just wrote, never from fixtures.
+    assert charts > _index(steps, "weather-stats.json")
+    assert charts > _index(steps, "weather-report.json")
+    assert "sha256sum -c" in steps[charts]["run"], "a re-render must be byte-identical"
+    upload = next(s for s in steps if s.get("with", {}).get("name") == "weather-results")
+    assert upload["with"]["if-no-files-found"] == "error"

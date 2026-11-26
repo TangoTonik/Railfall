@@ -726,6 +726,28 @@ jobs:
             --argjson total "$(jq .route_months weather-stats.json)" weather-stats.json
           cat weather-stats.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Charts render from the real results
+        # The same JSON the two steps above wrote, drawn as SVG: every chart
+        # present and non-empty, and a re-render is byte-identical (the
+        # committed docs/results charts can be regenerated without diffs).
+        run: |
+          make --no-print-directory charts CHARTS_ARGS="--out-dir results"
+          jq -e '[.charts[].name] == ["effects", "seasons", "dose", "intensity"]
+            and (.charts | all(.points > 0))
+            and (.charts[] | select(.name == "effects") | .points == 3)' results/charts.json
+          sha256sum results/*.svg > first.sha
+          make --no-print-directory charts CHARTS_ARGS="--out-dir results"
+          sha256sum -c first.sha
+          cp weather-stats.json weather-stats.md weather-report.json weather-report.md results/
+
+      - name: Upload the weather results and charts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-results
+          path: results/
+          if-no-files-found: error
+
       - name: dbt docs generate on the live warehouse
         # The catalog is introspected from Postgres as the transformer role: a
         # relation dbt cannot read is a catalog error and fails the step.
