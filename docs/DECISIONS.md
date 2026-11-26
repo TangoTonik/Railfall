@@ -756,3 +756,28 @@ Metabase and waits for `healthcheck --all`. A second run must recreate nothing,
 which needed pinned image digests and `BUILDX_NO_DEFAULT_ATTESTATIONS` (buildx
 attestations changed the image digest on every rebuild). e2e asserts the
 container IDs are unchanged.
+
+## Day 20 — Final write-up, results and v1.0.0
+
+**No result is typed by hand, not even in the README.** The numbers exist only
+where the pipeline writes them: the e2e job summary, the `weather-results`
+artifact and now the release. The README explains the question, the method and
+where to read the answer, and keeps the caveats, but quotes no figure: a number
+copied into prose goes stale on the next SNCF publication and nothing would
+catch it. The results page itself is generated and `--check`ed in e2e.
+
+**A release ships the results of its own commit, or nothing.** The `release`
+workflow finds the e2e run of the tagged commit, waits for it (`gh run watch
+--exit-status`, up to 90 minutes since e2e takes ~40) and attaches `RESULTS.md`
+plus a zip of the page, charts and JSON. A red or missing run fails the release
+instead of publishing a wheel without evidence. Downloading the artifact is
+cheaper than re-running the stack in the release job and guarantees the
+attached numbers are the ones the green run asserted on. This needs
+`actions: read` on the token, the only permission added.
+
+**1.0.0, not 0.x.** Every roadmap stage works on real data and real services
+and is covered by e2e, and the public surfaces (warehouse marts, `make`
+targets, env config) are documented and tested: that is the contract semver
+1.0 promises to keep. The changelog's analysis entry was corrected on the way
+(it said Holm and fixed effects; the code uses Benjamini-Hochberg and
+route × service × season strata).

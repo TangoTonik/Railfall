@@ -2,7 +2,44 @@
 
 **Do French train delays follow the weather?** A data platform that tracks how rain, wind and frost hit SNCF punctuality.
 
-> 🚧 Work in progress — day 19 of 20 done, see [ROADMAP.md](ROADMAP.md).
+> ✅ v1.0.0 — all 20 roadmap days done, see [ROADMAP.md](ROADMAP.md) and
+> [CHANGELOG.md](CHANGELOG.md).
+
+## Results
+
+The question: on a given TGV route, are months with more rain, strong wind or
+frost at its endpoints less punctual than comparable months without?
+
+The answer is produced by the pipeline, never typed by hand. Each `e2e` run
+downloads the real SNCF punctuality and Météo-France climatology, builds the
+marts, runs the significance tests and writes **`RESULTS.md`** with four SVG
+charts:
+
+| Chart | Shows |
+|---|---|
+| `effects` | stratified on-time gap per factor (rain, wind, frost) with its route-bootstrap CI, pooled gap alongside |
+| `seasons` | the same gaps inside each season; filled = significant after adjustment |
+| `dose` | slope per unit of intensity: does it get worse the harder it hits? |
+| `intensity` | on-time share per intensity band, baseline band hollow |
+
+Where to read them:
+
+- **Each GitHub release** carries `RESULTS-vX.Y.Z.md` and
+  `railfall-vX.Y.Z-results.zip` (page, charts, JSON) from the green e2e run of
+  the tagged commit; the release fails rather than ship without them.
+- **Each e2e run** shows the page in its job summary and keeps it as the
+  `weather-results` artifact.
+- **Locally**, after `make up` and a pipeline run:
+  `make weather-report weather-stats charts results`.
+
+Each factor gets a plain verdict (*lowers punctuality*, *raises
+punctuality*, *no significant effect*) only after stratifying by route ×
+service × season, permutation testing, route-level bootstrap and
+Benjamini-Hochberg correction (details under
+[Statistical analysis](#statistical-analysis-railfallanalysis)). Read the gaps as
+associations, not causes: weather is observed at the endpoints only, monthly
+aggregates dilute single storms, and cancellations are outside the on-time
+share. The page lists these caveats next to the numbers.
 
 ## Architecture
 
@@ -807,6 +844,12 @@ the source of truth, so UI edits to provisioned items are overwritten.
 `make dashboards-check` validates the specs offline and, with a dbt manifest,
 that every table they read is a mart dbt still builds. In e2e all of this runs
 twice on the real marts and must leave the same card and dashcard ids.
+
+### Releases
+
+`CHANGELOG.md` and `railfall.__version__` are the only places a version lives.
+`make release-check TAG=vX.Y.Z` runs the same check as CI; pushing the tag
+publishes the wheel, sdist, changelog notes and the live results.
 
 ## How this project is built
 
