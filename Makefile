@@ -38,7 +38,7 @@ AIRFLOW_PROFILE := --profile airflow
 BI_PROFILE := --profile bi
 
 .DEFAULT_GOAL := help
-.PHONY: help env build core up urls airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats charts freshness run-metrics monitor logs ps down \
+.PHONY: help env build core up urls airflow-build airflow metabase dashboards dashboards-check infra-init infra infra-check access health smoke ingest-sncf verify-sncf ingest-meteo verify-meteo dag-run silver verify-silver load verify-load dbt-debug dbt-build dbt-freshness dbt-docs dbt-docs-bundle readme-catalog quality quality-canary verify-staging verify-marts weather-report weather-stats charts results freshness run-metrics monitor logs ps down \
 	clean lint test
 
 help: ## Show this help
@@ -171,6 +171,9 @@ weather-stats: ## Test whether rain / wind / frost significantly lower punctuali
 
 charts: ## Render the weather results as SVG charts (needs weather-stats.json + weather-report.json)
 	$(PYTHON) -m railfall.analysis.charts --stats weather-stats.json --report weather-report.json $(CHARTS_ARGS)
+
+results: ## Write docs/RESULTS.md from weather-stats.json + weather-report.json + the chart manifest
+	$(PYTHON) -m railfall.analysis.writeup --stats weather-stats.json --report weather-report.json $(RESULTS_ARGS)
 
 freshness: ## Check every raw table was loaded recently and its newest period is within SLA
 	$(PYTHON) -m railfall.monitoring.freshness $(MONITOR_ARGS)

@@ -51,6 +51,7 @@ def test_help_lists_documented_targets():
         "verify-marts",
         "weather-report",
         "weather-stats",
+        "results",
         "freshness",
         "run-metrics",
         "monitor",
@@ -212,6 +213,14 @@ def test_weather_report_reads_the_marts_as_the_reader():
 def test_weather_stats_runs_the_significance_tests():
     out = _make("-n", "weather-stats", "PYTHON=python", "STATS_ARGS=--report s.json")
     assert out.strip() == "python -m railfall.analysis.weather --report s.json"
+
+
+def test_results_writes_the_page_from_the_results_json():
+    out = _make("-n", "results", "PYTHON=python", "RESULTS_ARGS=--check")
+    assert out.strip() == (
+        "python -m railfall.analysis.writeup --stats weather-stats.json "
+        "--report weather-report.json --check"
+    )
 
 
 @pytest.mark.parametrize(
